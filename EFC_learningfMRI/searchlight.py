@@ -25,17 +25,6 @@ def make_searchlight(sn):
     searchlight_surf(white, pial, mask, savedir, maxradius=10, maxvoxels=100)
 
 
-# Column names each metric writes into its gifti, in the order G_to_metric returns
-# them. The pooling below finds the two chord-group columns by their
-# '-trained'/'-untrained' suffix, so a new metric only has to keep that suffix.
-METRIC_LABELS = {
-    'crossnobis': ('crossnobis', 'crossnobis-trained', 'crossnobis-untrained'),
-    'cosine'     : ('cosine',    'cosine-trained',    'cosine-untrained'),
-    'theta'     : ('theta',    'theta-trained',    'theta-untrained'),
-}
-METRICS = tuple(METRIC_LABELS)
-
-
 def calc_G_searchlight(data, cond_vec, part_vec, session):
     """Crossvalidated second moment matrix of one searchlight, with searchlight-local
     multivariate noise normalization (MNN).
