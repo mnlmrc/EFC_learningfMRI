@@ -91,51 +91,113 @@ def subj_spec_models(order=None, glm=3):
     return G_finger, G_pattern, G_flexion
 
 
-def make_models(sn):
+def base_model(glm, Hem, roi, order=None, sns=gl.participants, session=3):
+    """Group-mean observed G of one ROI: the empirical baseline geometry.
 
-    G_tr_untr, G_tr, G_untr = fixed_models()
+    The crossvalidated Gs that :func:`scripts.pattern.calc_G_rois` writes per subject,
+    averaged over ``sns``. Each is stored in *that* subject's chord order (trained
+    first), so ``G_sorted`` puts every one of them on ``order`` **before** they are
+    averaged: slot *i* is then one physical chord, and what survives the average is the
+    geometry of the chords themselves. Averaged as stored, a different chord would sit
+    in slot *i* for every subject and, the trained sets being counterbalanced, that
+    geometry would wash out -- the mean of the raw slots comes out 0.93 cosine with a
+    uniform G, i.e. little more than overall dissimilarity.
 
-    order = np.array(get_trained_and_untrained(sn)).astype(int)
+    Pass the chord order of the subject being fitted (``order``), which is the order its
+    data and its other components are in; it defaults to the common ``gl.chordID``.
 
-    G_force_raw = G_sorted(np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', 'G_obs_raw.within_session.3.force.raw.npy')), sn, order)
-    G_force_abs = G_sorted(np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', 'G_obs_raw.within_session.3.force.abs.npy')), sn, order)
-    G_force_der = G_sorted(np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', 'G_obs_raw.within_session.3.force.der.npy')), sn, order)
+    As a component this asks how much of a session's geometry is already there in the
+    average geometry of ``session``, so the structural components are fitted on what
+    that baseline leaves over. The subject being fitted is *in* the average (as it was
+    before Aug 31), so the baseline is not independent of it -- drop ``sn`` from ``sns``
+    for a leave-one-out version.
+
+    Reads 16 small .npy per call, ~46 ms, so ~30 s over a whole fit run: not worth
+    caching, and a cache would have to hash ``order``.
+    """
+    order = gl.chordID if order is None else order
+
+    Gs = []
+    for sn in sns:
+        fname = f'G_obs.within_session.{session}.glm{glm}.{Hem}.{roi}.npy'
+        G     = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
+        G     = G_sorted(G, sn, order=order)      # off this subject's own chord order, onto `order`
+        Gs.append(G)
+
+    Gs = np.array(Gs)
+
+    return np.mean(Gs, axis=0)
+
+
+def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False):
+    """Second moment matrix of every model, keyed by name, for one subject.
+
+    The one place the model set is defined: :func:`make_models` wraps these into the
+    PcmPy models it fits, and ``scripts.pattern.make_model_correlation_dataframe``
+    correlates the same matrices against the observed RDMs, so what is fitted and what
+    is correlated cannot drift apart.
+
+    ``order`` is the chord order the matrices come out in, and defaults to the subject's
+    own trained-first order -- the order its betas, and so its fitted G, are in. Pass a
+    common order (``gl.chordID``) to line every subject's models up slot by slot, as the
+    RSA correlations do. ``type``, ``trained`` and ``untrained`` say which chords *this*
+    subject trained, so they are built from the subject's trained set rather than by
+    assuming the first four slots are the trained ones -- the two agree on the default
+    order, and only the common order tells them apart.
+
+    ``Hem`` and ``roi`` add the ROI's ``base`` matrix (see :func:`base_model`), last, so
+    the other components keep their index in ``theta``. ``force`` adds the three force
+    matrices, which are off by default.
+
+    Returns a dict name -> (8, 8) G, in component order.
+    """
+    chords  = np.array(get_trained_and_untrained(sn)).astype(int)
+    order   = chords if order is None else np.asarray(order).astype(int)
+    trained = np.isin(order, chords[:4])              # which slots of `order` this subject trained
+
+    v_tr_untr = np.where(trained, -1.0, 1.0)          # trained -1, untrained +1, as in fixed_models
 
     G_finger, G_pattern, G_flexion = subj_spec_models(order=order)
 
-    M = []
-    M.append(pcm.FixedModel(    'null',        np.zeros((8, 8))))
-    M.append(pcm.FixedModel(    'type',        G_tr_untr)) 
-    M.append(pcm.FixedModel(    'trained',     G_tr)) 
-    M.append(pcm.FixedModel(    'untrained',   G_untr))
-    M.append(pcm.FixedModel(    'finger',      G_finger))
-    M.append(pcm.FixedModel(    'pattern',     G_pattern))
-    M.append(pcm.FixedModel(    'flexion',     G_flexion))
-    # M.append(pcm.FixedModel(    'force_raw',   G_force_raw))
-    # M.append(pcm.FixedModel(    'force_abs',   G_force_abs))
-    # M.append(pcm.FixedModel(    'force_der',   G_force_der))
-    M.append(pcm.ComponentModel('component', np.array([G_tr_untr   / np.trace(G_tr_untr),
-                                                       G_tr        / np.trace(G_tr),
-                                                       G_untr      / np.trace(G_untr),
-                                                       G_finger    / np.trace(G_finger),
-                                                       G_pattern   / np.trace(G_pattern),
-                                                       G_flexion   / np.trace(G_flexion),
-                                                    #    G_force_raw / np.trace(G_force_raw),
-                                                    #    G_force_abs / np.trace(G_force_abs),
-                                                    #    G_force_der / np.trace(G_force_der)
-                                                       ])))
-    M.append(pcm.FreeModel('ceil', 8))
+    G = {'type'     : C @ np.outer(v_tr_untr, v_tr_untr),
+         'trained'  : C @ np.diag(trained.astype(float)),
+         'untrained': C @ np.diag((~trained).astype(float)),
+         'finger'   : G_finger,
+         'pattern'  : G_pattern,
+         'flexion'  : G_flexion}
 
-    comp_names = ['type', 
-                  'trained',
-                  'untrained',
-                  'finger', 
-                  'pattern',
-                  'flexion',
-                #   'force_raw',
-                #   'force_abs',
-                #   'force_der',
-                  ]
+    if force:
+        for metric in ('raw', 'abs', 'der'):
+            fname             = f'G_obs_raw.within_session.3.force.{metric}.npy'
+            G[f'force_{metric}'] = G_sorted(np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname)), sn, order)
+
+    if Hem is not None and roi is not None:
+        G['base'] = base_model(glm, Hem, roi, order)  # on the same chord order as every other model
+
+    return G
+
+
+def make_models(sn, glm=3, Hem=None, roi=None, force=False):
+    """The model list and the component names for one subject.
+
+    The matrices come from :func:`model_Gs`, on the subject's own trained-first chord
+    order -- the order its data are in. Pass ``Hem`` and ``roi`` to add the ROI's
+    ``base`` component (see :func:`base_model`); without them the component model holds
+    the structural components only. ``base`` goes last, so the other components keep
+    their index in ``theta``, and it is a component only -- it is not fitted on its own
+    as a fixed model.
+    """
+
+    G = model_Gs(sn, glm=glm, Hem=Hem, roi=roi, force=force)
+
+    M = [pcm.FixedModel('null', np.zeros((8, 8)))]
+    M += [pcm.FixedModel(name, G[name]) for name in G if name != 'base']
+
+    comp_names = list(G)
+    Gc         = [G[name] / np.trace(G[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
+
+    M.append(pcm.ComponentModel('component', np.array(Gc)))
+    M.append(pcm.FreeModel('ceil', 8))
 
     return M, comp_names
 
@@ -163,6 +225,11 @@ def fit_component_model(loader, sessions=None):
       included, so it overfits) is the upper bound, the crossvalidated group fit
       (fitted to the other N-1) the lower one.
 
+    The component model also carries the ROI's ``base`` component -- the group-mean
+    observed G of session 3 over ``gl.participants``, see :func:`base_model` -- so the
+    structural components are fitted on top of the empirical baseline geometry rather
+    than on the raw patterns.
+
     The group fits need every subject of a cell at once, so the datasets are kept as
     the loader yields them -- the loader is the expensive part and only runs once.
 
@@ -174,7 +241,6 @@ def fit_component_model(loader, sessions=None):
     atlas    = loader.atlas_name
     sessions = gl.sessions if sessions is None else sessions
 
-    datasets = defaultdict(dict)          # (Hem, roi, session) -> {sn: Dataset}
     for data in loader:
         for session in sessions:
             keep = runs_to_keep(data.cond_vec, session=session)
@@ -187,16 +253,17 @@ def fit_component_model(loader, sessions=None):
             obs_des = {'cond_vec': cond_vec, 'part_vec': part_vec}
             Y       = pcm.dataset.Dataset(betas, obs_descriptors=obs_des)
 
-            datasets[(data.Hem, data.roi, session)][data.sn] = Y
-
-            model, comp_names = make_models(data.sn)
+            model, comp_names = make_models(data.sn, glm=glm, Hem=data.Hem, roi=data.roi)
 
             T_in, _ = pcm.fit_model_individ(Y, model, fit_scale=True, verbose=True, fixed_effect='block')
             _, theta_in = pcm.fit_model_individ(Y, model[-2], fit_scale=False, verbose=True, fixed_effect='block')
 
             path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
             stem = f'{atlas}.glm{glm}.{session}.{data.Hem}.{data.roi}.p'
-            _dump(theta_in, f'component_model.theta_in.{stem}', path)
+            # the names go in with the theta: a component list that changed since the fit
+            # (a component added, or fit_scale flipped) is then caught by the reader
+            # instead of silently shifting every weight onto the wrong name
+            _dump({'theta': theta_in, 'comp_names': comp_names}, f'component_model.theta_in.{stem}', path)
             _dump(T_in,     f'component_model.T_in.{stem}',     path)
 
 

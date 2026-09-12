@@ -1,12 +1,15 @@
 import argparse
 import inspect
-from functools import partial
 
 import EFC_learningfMRI.globals as gl
 import EFC_learningfMRI.searchlight as sl
 
 # GLM the betas come from.
 GLM = 3
+
+# The searchlight itself is run once and saves each centre's G here (one .npy per
+# subject/session/hemisphere); every metric below is read off those Gs afterwards.
+G_FNAME = 'searchlight_G'
 
 # One output file per metric, per subject/session/hemisphere, plus the pooled group maps.
 OUT_FNAME = {metric: f'searchlight_{metric}' for metric in sl.METRICS}
@@ -22,29 +25,35 @@ def define(sns=gl.participants):
         sl.make_searchlight(sn=sn)
 
 
-def searchlight_distance(sns=gl.participants, glm=GLM, metric='crossnobis',
-                         sessions=gl.sessions, multivariate_pw=True):
-    """DISTANCE: run the searchlight for one distance metric, one file per subject/session/hemisphere.
+def searchlight_G(sns=gl.participants, glm=GLM, sessions=gl.sessions):
+    """G: run the searchlight and save each centre's crossvalidated G.
 
-    `metric` is either 'crossnobis' (pattern separation, scales with how strongly the
-    region is driven) or 'theta' (the angle between chord patterns, invariant to the
-    overall activity) -- both are read off the same crossvalidated G, see
-    `sl.G_to_distance`.
-
-    With `multivariate_pw` the betas are whitened by the searchlight-local noise
-    covariance (which needs the residual timeseries); otherwise they are prewhitened
-    once with ResMS.
+    One (n_centers, 8, 8) .npy per subject, session and hemisphere. The betas are whitened
+    by the searchlight-local noise covariance (multivariate noise normalization), so this
+    step needs the residual timeseries. It is the slow step, and it is metric-free: every
+    distance below is computed from these Gs afterwards.
     """
-    metric_fn = sl.calc_avg_distance_mnn if multivariate_pw else sl.calc_avg_distance
-
-    searchlight = sl.Searchlight(sns             = sns,
-                                 glm             = glm,
-                                 sessions        = sessions,
-                                 multivariate_pw = multivariate_pw,
-                                 metric_fn       = partial(metric_fn, metric=metric),
-                                 metric_labels   = sl.METRIC_LABELS[metric],
-                                 out_fname       = OUT_FNAME[metric])
+    searchlight = sl.Searchlight(sns       = sns,
+                                 glm       = glm,
+                                 sessions  = sessions,
+                                 out_fname = G_FNAME)
     searchlight.run()
+
+
+def searchlight_distance(sns=gl.participants, glm=GLM, metric='crossnobis', sessions=gl.sessions):
+    """DISTANCE: read the saved Gs and write one distance map per subject/session/hemisphere.
+
+    `metric` is 'crossnobis' (pattern separation, scales with how strongly the region is
+    driven), 'cosine', or 'theta' (the angle between chord patterns, invariant to the
+    overall activity) -- all read off the same crossvalidated G, see `sl.G_to_metric`.
+    Needs `searchlight_G` to have run for these subjects and sessions.
+    """
+    sl.make_distance_maps(sns       = sns,
+                          glm       = glm,
+                          metric    = metric,
+                          sessions  = sessions,
+                          fname   = G_FNAME,
+                          out_fname = OUT_FNAME[metric])
 
 
 def make_group_maps(sns=gl.participants, glm=GLM, metric='crossnobis', sessions=gl.sessions):
@@ -60,6 +69,7 @@ def make_group_maps(sns=gl.participants, glm=GLM, metric='crossnobis', sessions=
 # flag rather than one key per metric, so the keys stay the same as metrics are added.
 FUNC = {
     'define'        : define,
+    'searchlight_G' : searchlight_G,
     'distance'      : searchlight_distance,
     'distance_group': make_group_maps,
 }
@@ -84,16 +94,12 @@ if __name__ == '__main__':
     parser.add_argument('--glm', type=int, default=GLM, help='GLM the betas come from')
     parser.add_argument('--sessions', nargs='+', type=int, default=gl.sessions, help='session numbers to run')
     parser.add_argument('--metric', default='crossnobis', choices=list(sl.METRICS), help='distance metric, the distance* steps only')
-    parser.add_argument('--pw', default='multivariate', choices=['multivariate', 'univariate'], help='prewhitening: searchlight-local noise covariance, or once with ResMS')
     args = parser.parse_args()
 
     kwargs = {k: v for k, v in vars(args).items() if k not in ('what', 'pw') and v is not None}
-    kwargs['multivariate_pw'] = args.pw == 'multivariate'
     main(args.what, **kwargs)
 
     if args.what is None:
-        # define() only has to be run once per participant, and is slow -- uncomment for a new one.
-        # main('define', **kwargs)
         for metric in sl.METRICS:
             main('distance',       **{**kwargs, 'metric': metric})
             main('distance_group', **{**kwargs, 'metric': metric})

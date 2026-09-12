@@ -137,9 +137,7 @@ def _ancova_beta(df, metric):
     """
     y = df[metric].to_numpy()
     g = df[f'{metric}_group'].to_numpy()
-    c = df.chord.map({'trained'          : 1, 
-                      'untrained'        : -1}
-                      ).to_numpy()
+    c = df.chord.map({'trained'  : 1, 'untrained': -1}).to_numpy()
     X = np.c_[g, c, np.ones(len(df))]
     B = np.linalg.pinv(X) @ y
 
@@ -344,8 +342,7 @@ def _rdm_vectors(sns, H, roi, session, glm, prefix='G_obs_raw', order=None):
 
     rdms = []
     for sn in sns:
-        G   = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}',
-                    f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
+        G   = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
         G_s = G_matrix.G_sorted(G, sn, order=order)
         D   = pcm.G_to_dist(G_s)
         rdms.append(D[mask])
@@ -419,6 +416,75 @@ def make_noise_ceiling_dataframe(glm=3, atlas_name='ROI', sns=None, prefix='G_ob
     df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'noise_ceiling.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
+def _model_rdm_vectors(sn, glm=3, order=None, Hem=None, roi=None, force=False):
+    """Vectorised RDM of every model in ``pcm.model_Gs``, for one participant.
+
+    Built on the same chord ``order`` and put through the same ``G_to_dist`` and lower
+    triangle as :func:`_rdm_vectors`, so entry k of a model vector is the chord pair
+    that entry k of the data vector is. The models are per participant because
+    ``type``, ``trained`` and ``untrained`` depend on which chords that participant
+    trained -- on a common order those land in different slots for each of them.
+
+    Returns a dict model name -> (n_pairs,) vector.
+    """
+    mask = np.tri(len(gl.chordID), k=-1, dtype=bool)
+    Gs   = pcm_.model_Gs(sn, glm=glm, Hem=Hem, roi=roi, order=order, force=force)
+    return {name: pcm.G_to_dist(G)[mask] for name, G in Gs.items()}
+
+
+def make_model_correlation_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', rois=None, prefix='G_obs_raw',
+                                     method='pearson', order=None, include_base=False):
+    """RSA: each participant's crossnobis RDM against every model RDM of ``pcm.model_Gs``.
+
+    One row per participant x Hem x roi x session x model, carrying the correlation ``r``
+    and that cell's noise ceiling (``lower``, ``upper``) in the same columns -- the same
+    ``method`` scores model and ceiling, which is the only way the two are comparable, so
+    a model can be plotted straight against the ceiling band without a second merge.
+
+    ``include_base`` adds the group-mean observed G of session 3 (``pcm.base_model``) as
+    a model. It is off by default: it is the data's own group mean, so it is close to the
+    upper bound of the noise ceiling by construction rather than a prediction about the
+    geometry -- in session 3 it *is* that bound.
+
+    Note that ``trained`` and ``untrained`` are redundant here, and come out as exact
+    mirror images of each other: their two Gs sum to the centring matrix, whose RDM is
+    flat, so their RDMs sum to a constant and correlate -1. The component model tells
+    them apart because it weights them non-negatively and separately; a correlation
+    cannot. Read the pair as one axis, 'which set is the more spread out'.
+
+    Writes ``model_correlation.within_session.<atlas_name>.glm<glm>.tsv`` to the pcm dir.
+    """
+    if rois is none:
+        rois  = gl.rois[atlas_name]
+    order = gl.chordID if order is None else order
+
+    # roi-independent, so built once per participant rather than once per cell
+    models = {sn: _model_rdm_vectors(sn, glm=glm, order=order) for sn in sns}
+
+    rows = []
+    for H, roi, session in itertools.product(gl.Hem, rois, gl.sessions):
+
+        print(f'doing {H}, {roi}, session {session}...')
+
+        # calculate noise ceiling (rdms in common order)
+        rdms         = _rdm_vectors(sns, H, roi, session, glm, prefix=prefix, order=order)
+        lower, upper = _noise_ceiling(rdms, method=method)
+
+        for i, sn in enumerate(sns):
+            for name, model_rdm in model_rdms.items():
+                rows.append({'sn'     : sn,
+                             'Hem'    : H,
+                             'roi'    : roi,
+                             'session': session,
+                             'model'  : name,
+                             'r'      : _corr(rdms[i], model_rdm, method),
+                             'lower'  : lower[i],
+                             'upper'  : upper[i]})
+
+    df = pd.DataFrame(rows)
+    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_correlation.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+
+
 def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, prefix='G_obs_raw'):
     """How much of each session's geometry is a pure rescaling of the reference session's.
 
@@ -456,8 +522,8 @@ def fit_component_model_rois(sns=gl.participants, glm=3, atlas_name='ROI', resid
     """Fit the PCM component model per (subject, Hem, roi, session).
 
     Prewhitens the betas once per (subject, roi) with BetasPrewithenedLoader, then
-    fits the component model (which includes the session-3 mean-deviation
-    component, 'md') and pickles each fit's ``theta_in`` next to the participant's Gs, as
+    fits the component model (which includes 'base', the group-mean observed G of
+    session 3) and pickles each fit's ``theta_in`` next to the participant's Gs, as
     ``component_model.theta_in.<atlas_name>.glm<glm>.<session>.<Hem>.<roi>.p`` --
     which component_summary reads back.
     """
@@ -470,24 +536,34 @@ def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
 
     Reads each pickled ``theta_in``, takes the component model's theta (the other
     models' thetas have different lengths, so the list cannot be arrayed as a whole),
-    exponentiates it to weights -- one per component, then the scale and the noise --
-    and writes one long-form row per component to
-    ``component_model.<atlas_name>.glm<glm>.tsv`` in the pcm dir.
+    exponentiates it to weights -- one per component -- and writes one long-form row
+    per component to ``component_model.<atlas_name>.glm<glm>.tsv`` in the pcm dir.
+
+    The component names are the ones the fit itself stored next to its theta, so a
+    component list that has changed since the fit cannot shift the weights onto the
+    wrong names -- a pickle from before the names were stored raises instead.
     """
-    sns           = gl.participants if sns is None else sns
-    M, comp_names = pcm_.make_models(sns[0])
+    sns = gl.participants if sns is None else sns
 
     df = pd.DataFrame()
     for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, gl.rois[atlas_name]):
 
         path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'component_model.theta_in.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
         with open(path, 'rb') as f:
-            theta_in = pickle.load(f)[0][:-1]
+            fit = pickle.load(f)
 
-        # theta_in holds one theta per model and they have different lengths, so it cannot be
-        # arrayed as a whole -- take the component model's: one log weight per component,
-        # then the log scale and the log noise
-        weight = np.exp(np.array(theta_in))
+        if not isinstance(fit, dict):
+            raise ValueError(f'{path} was fitted before the component names were stored with the theta, '
+                             f'so which component each weight belongs to cannot be known -- rerun the '
+                             f'fit_component pass')
+
+        comp_names = fit['comp_names']
+
+        # fit['theta'] holds one theta per model and they have different lengths, so it cannot
+        # be arrayed as a whole -- take the component model's: one log weight per component,
+        # followed by the log scale (only if the fit had fit_scale=True) and the log noise,
+        # which is why the components are sliced by name count and not by dropping the tail
+        weight = np.exp(np.array(fit['theta'][0][:len(comp_names)]))
 
         df_tmp = pd.DataFrame({'weight': weight.squeeze(), 'component': comp_names})
         df_tmp['sn']      = sn
@@ -531,6 +607,7 @@ FUNC = {
     'dataframe_distance_force'      : make_force_distance_dataframe,
     'dataframe_ancova'              : make_ancova_dataframe,
     'dataframe_noise_ceiling'       : make_noise_ceiling_dataframe,
+    'dataframe_model_correlation'   : make_model_correlation_dataframe,
     'dataframe_scaling'             : make_scaling_dataframe,
     'dataframe_component_weight'    : make_component_weight_dataframe,
     'dataframe_component_likelihood': make_likelihood_dataframe,
