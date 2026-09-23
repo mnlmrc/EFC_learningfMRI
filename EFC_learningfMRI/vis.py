@@ -407,6 +407,93 @@ def plot_behav_sess(fig, ax, df, x='session', y=None, hue=None, hue_order=None, 
         ax.legend(frameon=False,)
 
 
+CHORD_DIRECTION = {'1': 1, '2': -1, '9': 0}  # chordID digits: extension, flexion, finger not instructed
+
+
+def plot_force_pattern(fig, axs, df, chords=None, x='finger', y='force_raw', order=None, hue=None, hue_order=None,
+                       palette=None, color=None, add_zero=True, kind='point', chord_col='chordID',
+                       instructed=True, legend=True, alpha=1, **kwargs):
+    """One panel per chord: the force of each finger, i.e. the chord's force pattern.
+
+    Mirrors :func:`plot_im_sess` with the chords in the place of the rois, so the
+    panels share a y axis and the eight patterns can be compared by eye.
+
+    `df` is expected to be the *long* force table (one row per trial x finger),
+    already averaged to one value per subject x chord x finger -- the error bars
+    are then the s.e.m. across subjects.
+
+    Args:
+        df:         long force table, pre-averaged within subject.
+        chords:     chords to draw, one panel each; defaults to every chord in df.
+        order:      finger order along x; defaults to gl.fingers.
+        chord_col:  column holding the chord identity (default 'chordID').
+        instructed: mark the instructed direction of each finger (up = extension,
+                    down = flexion, nothing = finger not instructed), read off the
+                    chordID digits. Only meaningful for a signed measure.
+    """
+    kws = {
+        'point' : dict(dodge=.2, lw=2, ls='-', errorbar='se', estimator='mean'),
+        'box'   : dict(showfliers=False, boxprops=dict(alpha=alpha)),
+        'bar'   : dict(errorbar='se'),
+        'strip' : dict(jitter=True, dodge=True, alpha=.2),
+        'violin': dict(inner='point', split=False),
+    }[kind] | kwargs
+
+    # dodge only makes sense across hue levels; seaborn crashes on a numeric dodge without hue
+    if hue is None:
+        kws.pop('dodge', None)
+
+    axs    = np.atleast_1d(np.asarray(axs, dtype=object)).ravel()
+    order  = gl.fingers if order is None else order
+    chords = sorted(df[chord_col].unique()) if chords is None else chords
+
+    for c, chord in enumerate(chords):
+        ax     = axs[c]
+        common = dict(data      = df[df[chord_col] == chord],
+                      ax        = ax,
+                      x         = x,
+                      y         = y,
+                      order     = order,
+                      hue       = hue,
+                      hue_order = hue_order,
+                      palette   = palette,
+                      color     = color,
+                      legend    = legend and c == len(chords) - 1)
+        if kind == 'point':
+            sb.pointplot(**common, **kws)
+        elif kind == 'box':
+            sb.boxplot(**common, **kws)
+        elif kind == 'bar':
+            sb.barplot(**common, **kws)
+        elif kind == 'violin':
+            sb.violinplot(**common, **kws)
+        elif kind == 'strip':
+            sb.stripplot(**common, **kws)
+
+        ax.set_title(chord)
+        ax.set_xlabel(None)
+        ax.set_ylabel(None)
+        ax.set_xticks(range(len(order)), order, rotation=90)
+
+        # the digits sit in gl.fingers order, so digit i belongs to tick i
+        if instructed:
+            for i, digit in enumerate(str(chord)):
+                d = CHORD_DIRECTION[digit]
+                if d:
+                    ax.plot(i, .98 if d > 0 else .02, marker='^' if d > 0 else 'v', ms=4, color='grey',
+                            transform=blended_transform_factory(ax.transData, ax.transAxes), clip_on=False)
+
+        # the y axis is shared, so only the leftmost column of the grid keeps it
+        first_col = ax.get_subplotspec().is_first_col() if ax.get_subplotspec() is not None else c == 0
+        if not first_col:
+            sb.despine(ax=ax, left=True)
+            ax.tick_params(left=False, labelleft=False)
+        else:
+            sb.despine(ax=ax)
+        if add_zero is not False:
+            ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
+
+
 def plot_behav(fig, ax, df, metric='ET', ylim=[0, 2.5], melt=False, id_vars=None, value_vars=None, var_name=None,
                ylabel=None, title=None):
     """

@@ -62,7 +62,7 @@ def make_group_maps(sns=gl.participants, glm=GLM, metric='crossnobis', sessions=
     Writes the group mean of every column, plus the group mean of the within-subject
     trained-minus-untrained difference (`<fname>_diff.*`), per session and hemisphere.
     """
-    sl.pool_searchlight(sns=sns, glm=glm, fname=OUT_FNAME[metric], sessions=sessions)
+    sl.pool_searchlight(sns=sns, glm=glm, mask_p=None, fname=OUT_FNAME[metric], sessions=sessions)
 
 
 # Step name -> function, in the order the full run does them. The metric is a `--metric`
@@ -101,5 +101,5 @@ if __name__ == '__main__':
 
     if args.what is None:
         for metric in sl.METRICS:
-            main('distance',       **{**kwargs, 'metric': metric})
-            main('distance_group', **{**kwargs, 'metric': metric})
+    #         main('distance',       **{**kwargs, 'metric': metric})
+             main('distance_group', **{**kwargs, 'metric': metric})
