@@ -26,6 +26,33 @@ def _ancova_group(y, g, chord, session, sessions=gl.sessions):
     return B[:k], dict(zip(sessions, B[k:k + n])), dict(zip(sessions, B[k + n:]))
 
 
+def _ancova_cell(cell, keys, metrics, scale, force_metric=(), group=True):
+    """Adjusted dissimilarities of one subject's cell (all sessions), one column set per metric.
+
+    """
+    adjusted = cell[keys + ['session', 'chord', 'pair']].copy()
+
+    for metric in metrics:
+        names = (['group'] if group else []) + [f'force_{fm}' for fm in force_metric]
+        y     = cell[metric].to_numpy()
+        g     = cell[[f'{metric}_{name}' for name in names]].to_numpy()
+
+        if scale:
+            y, g = y / y.mean(), g / g.mean(axis=0)
+
+        slopes, slope_chord, intercept = _ancova_group(y, g, cell.chord, cell.session)
+
+        # the pair's own dissimilarity with the covariates taken out, centred on the
+        # cell's mean covariates so the adjusted values stay on the scale of y
+        adjusted[metric]                  = y - (g - g.mean(axis=0)) @ slopes
+        adjusted[f'{metric}_slope_chord'] = cell.session.map(slope_chord)
+        for name, slope in zip(names, slopes):
+            adjusted[f'{metric}_slope_{name}'] = slope
+        adjusted[f'{metric}_intercept']   = cell.session.map(intercept)
+
+    return adjusted
+
+
 def make_rois_ancova_group_dataframe(glm=3, atlas_name='ROI', rois=None, sns=gl.participants, metrics=('crossnobis', 'cosine'), scale=False):
 
     """Trained vs untrained, with the reference-session geometry regressed out.
@@ -137,34 +164,7 @@ def make_force_ancova_group_dataframe(force_metrics=('raw', 'abs', 'der'), sns=g
     df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity_ancova.within_session.force.tsv'), sep='\t', index=False)
 
 
-def _ancova_cell(cell, keys, metrics, scale, force_metric=(), group=True):
-    """Adjusted dissimilarities of one subject's cell (all sessions), one column set per metric.
 
-    ``keys`` are the columns identifying the cell (sn/Hem/roi or sn/metric), copied
-    onto the output next to session/chord/pair. Each entry of ``force_metric`` adds the
-    ``{metric}_force_{fm}`` column as a covariate; ``group=False`` drops the group geometry.
-    """
-    adjusted = cell[keys + ['session', 'chord', 'pair']].copy()
-
-    for metric in metrics:
-        names = (['group'] if group else []) + [f'force_{fm}' for fm in force_metric]
-        y     = cell[metric].to_numpy()
-        g     = cell[[f'{metric}_{name}' for name in names]].to_numpy()
-
-        if scale:
-            y, g = y / y.mean(), g / g.mean(axis=0)
-
-        slopes, slope_chord, intercept = _ancova_group(y, g, cell.chord, cell.session)
-
-        # the pair's own dissimilarity with the covariates taken out, centred on the
-        # cell's mean covariates so the adjusted values stay on the scale of y
-        adjusted[metric]                  = y - (g - g.mean(axis=0)) @ slopes
-        adjusted[f'{metric}_slope_chord'] = cell.session.map(slope_chord)
-        for name, slope in zip(names, slopes):
-            adjusted[f'{metric}_slope_{name}'] = slope
-        adjusted[f'{metric}_intercept']   = cell.session.map(intercept)
-
-    return adjusted
 
 
 # Step name -> function.
