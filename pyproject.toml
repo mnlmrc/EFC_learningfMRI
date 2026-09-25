@@ -1,0 +1,48 @@
+# Project metadata and direct dependencies for EFC_learningfMRI.
+#
+# requirements.txt remains the exact, frozen environment (pip freeze). This file
+# lists only the packages the code imports directly, with lower bounds taken
+# from those pins.
+#
+# The lab packages (nitools, PcmPy, Functional_Fusion, surfAnalysisPy,
+# AnatSearchlight, imaging_pipelines) are NOT listed: they are pinned as git
+# submodules under external/ and made importable by setup_env.sh. See README.md.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "EFC_learningfMRI"
+version = "0.1.0"
+description = "fMRI analysis of learning in the extensor-flexor chord (EFC) task"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Marco Emanuele" }]
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy>=2.1",
+    "scipy>=1.14",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "nibabel>=5.4",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+    "statsmodels>=0.14",
+    "pingouin>=0.6",
+    "SUITPy>=2.1",
+]
+
+[project.optional-dependencies]
+notebooks = [
+    "jupyterlab>=4.2",
+    "ipykernel>=6.29",
+    "ipywidgets>=8.1",
+]
+
+[project.urls]
+Repository = "https://github.com/mnlmrc/EFC_learningfMRI"
+
+[tool.setuptools]
+packages = ["EFC_learningfMRI"]

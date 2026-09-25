@@ -140,4 +140,83 @@ def G_scaling(G_ref, G_tar):
     }, index=[0])
 
 
+def pair_index():
+    """(row, col) indices of the chord pairs, split into the three pair groups.
 
+    """
+    mask                           = np.tri(8, k=-1, dtype=bool)
+    mask_trained                   = mask.copy()
+    mask_untrained                 = mask.copy()
+    mask_trained[4:]               = False
+    mask_untrained[:, :4]          = False
+    mask_trained_untrained         = np.zeros((8, 8), dtype=bool)
+    mask_trained_untrained[:4, 4:] = True
+
+    # (classification, row indices, col indices) for the three chord-pair groups
+    masks = {'trained'          : mask_trained,
+             'untrained'        : mask_untrained,
+             'trained_untrained': mask_trained_untrained}
+    return {chord: np.where(m) for chord, m in masks.items()}
+
+
+def G_rows(G, sn, **labels):
+    """One row per chord pair of a single 8x8 G: its crossnobis distance, cosine and angle.
+
+    ``labels`` are copied onto every row, and are what identifies the G the pair
+    came from — Hem/roi/session for a neural G, metric/session for a force one.
+    The ``pair`` label is order-normalised so both Gs key on the same pair id.
+    """
+    chords = get_trained_and_untrained(sn)
+    D      = pcm.G_to_dist(G)
+    cos    = pcm.G_to_cosine(G)
+
+    rows = []
+    for chord, (r, c) in pair_index().items():
+        for ri, ci in zip(r, c):
+            rows.append({'sn'        : sn,
+                         **labels,
+                         'chord'     : chord,
+                         'pair'      : '-'.join(sorted([str(chords[ri]), str(chords[ci])])),
+                         'crossnobis': D[ri, ci],
+                         'cosine'    : 1 - cos[ri, ci],
+                         #'theta'     : np.arccos(cos[ri, ci])
+                         })
+    return rows
+
+
+def add_group_reference(df, keys, ref_session=3, crossval=False):
+    """Attach the reference-session group geometry.
+
+    """
+
+    # group-mean geometry: across-subject mean of each chord pair in the reference
+    # session, pooled over trained/untrained/mixed (no 'chord'/'session' in the key,
+    # so all subjects contribute). Merged onto every row, so the *_group columns hold
+    # the ref-session reference for every session.
+    s_ref = df[df.session == ref_session]
+    if crossval:
+        # leave-one-subject-out: subtract each subject's own value from the pair sum,
+        # so their reference is the mean over the other subjects. Keyed by subject too,
+        # then merged so it broadcasts across that subject's sessions.
+        ref = s_ref[keys + ['sn']].copy()
+        for metric in ('crossnobis', 'cosine'):
+            g = s_ref.groupby(keys)[metric]
+            ref[f'{metric}_group'] = (g.transform('sum') - s_ref[metric]) / (g.transform('size') - 1)
+        df = df.merge(ref, on=keys + ['sn'], how='left')
+    else:
+        ref = (s_ref.groupby(keys, as_index=False)
+                 .agg(crossnobis_group=('crossnobis', 'mean'),
+                      cosine_group    =('cosine',     'mean')))
+        df  = df.merge(ref, on=keys, how='left')
+
+    df['theta_group'] = np.arccos(df.cosine_group)
+
+    return df
+
+
+def make_fname(session, repetition):
+    """The 'within_session.3.1' / 'across_session' part of a G filename."""
+    fname = 'across_session' if session == 'all' else 'within_session'
+    fname = fname + '.' + str(session) if session != 'all' else fname
+    fname = fname + '.' + str(repetition) if repetition != 'all' else fname
+    return fname

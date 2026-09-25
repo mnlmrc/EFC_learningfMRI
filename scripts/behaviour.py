@@ -1,9 +1,13 @@
 import argparse
 import inspect
+import itertools
 import os
 
+import numpy as np
+import pandas as pd
 import EFC_learningfMRI.globals as gl
 import EFC_learningfMRI.behaviour as behaviour
+import EFC_learningfMRI.G_matrix as G_matrix
 
 # Days of the experiment.
 N_SESSIONS = 24
@@ -103,8 +107,67 @@ def force_by_session_avg():
     sess_rep_force.to_csv(os.path.join(gl.baseDir, gl.behavDir, FSESS_REP), sep='\t', index=False)
 
 
-# Step name -> function, in the order the full run does them. Every step here writes a
-# tsv, so the key is the output file's stem: <domain>_<unit>[_<shape>].
+def calc_G_force(sns=gl.participants, metrics=('raw', 'abs', 'der'), sessions=('all', *gl.sessions), repetitions=('all', 1, 2)):
+    """The same Gs as calc_G_rois, but over the five fingers' force instead of voxels.
+
+    Fingers take the place of the voxels, so the matrices come out with the same
+    layout as the ROI ones — 8x8 within a session, 24x24 across, trained chords
+    first — and land next to them in the pcm directory as
+    ``G_obs.<epoch>.force.<metric>.npy``.
+    """
+    force = pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, 'force.run.wide.tsv'), sep='\t')
+
+    for metric in metrics:
+        for sn in sns:
+            for session in sessions:
+                for repetition in repetitions:
+
+                    print(f'force {metric}, doing participant {sn}...')
+
+                    data, cond_vec, part_vec = behaviour.force_patterns(force, sn, metric, session=session, repetition=repetition)
+
+                    G        = G_matrix.calc_G(data, cond_vec, part_vec, centred=False)
+                    cov      = G_matrix.calc_G(data, cond_vec, part_vec, centred=True)
+                    G_raw    = G_matrix.calc_G(data, cond_vec, part_vec, centred=False, fixed_effect=False)
+                    G_noxval = G_matrix.calc_G(data, cond_vec, part_vec, centred=False, fixed_effect=False, crossval=False)
+
+                    save_path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}')
+                    os.makedirs(save_path, exist_ok=True)
+
+                    fname = G_matrix.make_fname(session, repetition)
+
+                    np.save(os.path.join(save_path, f'G_obs.{fname}.force.{metric}'), G)
+                    np.save(os.path.join(save_path, f'cov.{fname}.force.{metric}'), cov)
+                    np.save(os.path.join(save_path, f'G_obs_raw.{fname}.force.{metric}'), G_raw)
+                    np.save(os.path.join(save_path, f'G_obs_noxval.{fname}.force.{metric}'), G_noxval)
+
+
+def make_force_distance_dataframe(metrics=('raw', 'abs', 'der'), sns=gl.participants, ref_session=3, crossval=False):
+    """The neural dataframe's counterpart over the force Gs written by pattern_G_matrix.
+
+    Same rows, same columns, with ``metric`` (the force measure) standing in for
+    ``Hem``/``roi``: the force Gs have the identical 8x8 trained-first layout, so
+    every chord pair lines up one-to-one with its neural row.
+    """
+    sns = gl.participants if sns is None else sns
+
+    rows = []
+    for metric, sess in itertools.product(metrics, gl.sessions):
+        for sn in sns:
+
+            print(f'doing participant {sn}, session {sess}, force {metric}...')
+
+            G = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'G_obs_raw.within_session.{sess}.force.{metric}.npy'))
+            rows += G_matrix.G_rows(G, sn, metric=metric, session=sess)
+
+    df = pd.DataFrame(rows)
+    df = G_matrix.add_group_reference(df, ['metric', 'pair'], ref_session, crossval)
+    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t', index=False)
+
+
+# Step name -> function, in the order the full run does them. The behaviour/force steps
+# write a tsv, so their key is the output file's stem: <domain>_<unit>[_<shape>]; the last
+# two build the force Gs and their dissimilarity table (pcm dir).
 FUNC = {
     'parse_sessions'   : behaviour_single_session,
     'behaviour_trial'  : behaviour_by_trial,
@@ -113,6 +176,8 @@ FUNC = {
     'force_run_wide'   : force_by_run_wide,
     'force_trial_long' : force_by_trial_long,
     'force_session'    : force_by_session_avg,
+    'G_force'          : calc_G_force,
+    'make_force_distance_dataframe': make_force_distance_dataframe,
 }
 
 

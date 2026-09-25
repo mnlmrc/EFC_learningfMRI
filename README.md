@@ -111,8 +111,8 @@ flowchart TD
     FFMRI[("<b>run-wise finger force for scanning sessions (wide format):</b><br/>behavioural/force.run.wide.tsv¹")]:::data
 
     %% ---------- force pattern analysis ----------
-    %%P_GFORCE["scripts/pattern.calc_G_force()"]:::code
-    %%P_DFFORCE["scripts/pattern.make_G_dataframe_force()"]:::code
+    %%P_GFORCE["scripts/behaviour.calc_G_force()"]:::code
+    %%P_DFFORCE["scripts/behaviour.make_force_distance_dataframe()"]:::code
 
     %%GFORCE[("<b>8x8 second-moment matrices of 5-finger absolute force and absolute force derivative for each participant, session[, repetition]:</b><br/>pcm/subj#lt;sn#gt;/G_obs_raw.within_session.#lt;session#gt;[.#lt;repetition#gt;].force.#lt;metric#gt;.npy")]:::data
     %%DFFORCE[("<b>session-wise crossnobis and angular distance between chord pairs:</b><br/>pcm/dissimilarity.within_session.force.tsv")]:::data
@@ -335,7 +335,7 @@ flowchart TB
         P_SCALE["scripts/pattern.make_scaling_dataframe()"]:::code
         SCALE[("<b>observed vs. scaling-predicted dissimilarity between sessions:</b><br/>pcm/scaling.between_session.glm#lt;glm#gt;.#lt;atlas#gt;.tsv")]:::data
 
-        P_CORR["scripts/pattern.correlation_between_sessions()"]:::code
+        P_CORR["scripts/correlation.correlation_between_sessions()"]:::code
         CORRMLE[("<b>MLE correlation estimates (individual and group fit) between neural activity patterns for trained and untrained chords:</b><br/>pcm/MLE_correlation.#lt;atlas#gt;.glm#lt;glm#gt;.tsv")]:::data
     %% CORRXVAL[("<b>cross-validated across-session cosine:</b><br/>pcm/xval_correlation.#lt;atlas#gt;.glm#lt;glm#gt;.tsv")]:::data
     %% CORRCOV[("<b>across-session cov per session-pair and chord set:</b><br/>pcm/cov.corr_across_sess.glm#lt;glm#gt;.#lt;spair#gt;.#lt;chord#gt;.#lt;H#gt;.#lt;roi#gt;.npy")]:::data
@@ -376,10 +376,10 @@ flowchart TB
         direction TB
         FRUN[("<b>run-wise finger force:</b><br/>behavioural/force.run.wide.tsv")]:::data
 
-        P_GFORCE["scripts/pattern.calc_G_force()"]:::code
+        P_GFORCE["scripts/behaviour.calc_G_force()"]:::code
         GFORCE[("<b>Second-moment matrices:</b><br/>pcm/subj#lt;sn#gt;/G_obs_raw.within_session.#lt;epoch#gt;.force.#lt;metric#gt;.npy²")]:::data
 
-        P_DFFORCE["scripts/pattern.make_dataframe_force()"]:::code
+        P_DFFORCE["scripts/behaviour.make_force_distance_dataframe()"]:::code
         DFFORCE[("<b>pair-wise geometry (crossnobis, cosine, angle):</b><br/>pcm/dissimilarity.within_session.force.tsv")]:::data
 
         FRUN --> P_GFORCE

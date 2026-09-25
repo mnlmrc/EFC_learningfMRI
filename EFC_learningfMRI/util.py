@@ -377,6 +377,14 @@ def split_trained_untrained(M):
     return tot, trained, untrained
 
 
+def diff_trained_untrained(df, stat, on):
+    """Trained minus untrained `stat` in column Diff, matching rows on the `on` columns."""
+    diff = df[df.chord=='trained'].merge(df[df.chord=='untrained'], on=on)
+    diff['Diff'] = diff[f'{stat}_x'] - diff[f'{stat}_y']
+    diff.session = diff.session.astype(int)
+    return diff
+
+
 
 def load_nat_emg(file_path):
     # Load the .mat file
