@@ -221,6 +221,7 @@ def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, pre
     df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'scaling.between_session.glm{glm}.{atlas_name}.tsv'), sep='\t', index=False)
 
 
+
 def fit_component_model_rois(sns=gl.participants, glm=3, atlas_name='ROI', residual_fname='residual.dtseries.nii'):
     """Fit the PCM component model per (subject, Hem, roi, session).
 

@@ -209,7 +209,7 @@ def add_group_reference(df, keys, ref_session=3, crossval=False):
                       cosine_group    =('cosine',     'mean')))
         df  = df.merge(ref, on=keys, how='left')
 
-    df['theta_group'] = np.arccos(df.cosine_group)
+    df['theta_group'] = np.arccos(1 - df.cosine_group)
 
     return df
 

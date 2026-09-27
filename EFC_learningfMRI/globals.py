@@ -47,6 +47,10 @@ participants = [101, 102, 103, 104, 105, 106, 107, 108, 110, 111, 112, 113, 114,
 
 chordID = np.sort(np.array([21911, 92122, 91211, 22911, 21291, 12129, 12291, 11911]))
 
+# per-finger digit -> letter: 1 extension, 2 flexion, 9 no press
+chord_digit_letter = {'1': 'E', '2': 'F', '9': 'N'}
+chordLabel = [''.join(chord_digit_letter[d] for d in str(c)) for c in chordID]
+
 # all 70 ways to split the 8 chords into trained (first 4) and untrained (last 4);
 # each entry is an 8-element list, ordered like util.get_trained_and_untrained()
 chordID_combinations = [
