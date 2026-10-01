@@ -318,6 +318,79 @@ def plot_ci_im_sess(fig, axs, df, rois=None, x='session', y=None, ci=('ci_low', 
             ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
 
 
+def plot_model_path(fig, axs, df, models, rois=None, labels=None, hue=None, hue_order=None, palette=None, color='k', add_zero=True, evidence=3, subjects=False, dodge=.15, roi_col=None, sn_col='sn', legend=True, **kwargs):
+    """AIC-corrected evidence along a path of nested model-family models, one panel per roi.
+
+    A slice through ``PcmPy.vis.plot_tree``: ``models`` are columns of the model-family
+    likelihood table (``model_family.likelihood.*.tsv``, one row per participant and
+    roi), each one the previous plus some components. Every model is penalised by the
+    number of components it adds to ``models[0]`` (``LL - k``, as PcmPy's
+    ``ModelFamily.model_posterior``), and expressed per participant as the log Bayes
+    factor against ``models[0]``, which is 0 by construction.
+
+    Draws the mean ± SE across participants, one line per ``hue`` level (e.g.
+    ``hue='session'``); without a ``palette`` the levels go from light to dark grey, in
+    ``hue_order``. ``dodge`` spreads the levels apart on the x axis. ``subjects=True``
+    adds each participant as a thin line. ``evidence`` draws a dashed line at that log
+    Bayes factor (3 ~ a Bayes factor of 20); ``None`` leaves it out. ``labels`` default
+    to the components each model adds to the one before it.
+    """
+    kws = dict(marker='o', ms=6, lw=2, capsize=0, elinewidth=2) | kwargs
+
+    if roi_col is None:
+        candidates = ['roi', 'regionname', 'region']
+        roi_col = next((c for c in candidates if c in df.columns), None)
+        if roi_col is None:
+            raise KeyError(f"None of {candidates} in df contain the requested rois; pass roi_col explicitly.")
+
+    if rois is None:
+        rois = df[roi_col].unique()
+
+    levels = [None] if hue is None else list(hue_order if hue_order is not None else sorted(df[hue].unique()))
+    if hue is None:
+        colors = [color]
+    elif palette is None:
+        colors = plt.get_cmap('Greys')(np.linspace(.35, 1, len(levels)))   # light to dark
+    else:
+        colors = palette
+    offsets = np.zeros(len(levels)) if len(levels) == 1 else np.linspace(-dodge, dodge, len(levels))
+
+    # components of each model on top of models[0]; the family names models by '+'-joined components
+    comps = [set(m.split('+')) - set(models[0].split('+')) for m in models]
+    k     = np.array([len(c) for c in comps])
+
+    if labels is None:
+        labels = ['base'] + ['\n'.join('+ ' + n for n in sorted(c - p)) for p, c in zip(comps[:-1], comps[1:])]
+
+    x = np.arange(len(models))
+    for r, roi in enumerate(rois):
+        ax    = axs[r] if len(rois) > 1 else axs
+        d_roi = df[df[roi_col] == roi]
+
+        for l, level in enumerate(levels):
+            d  = d_roi if level is None else d_roi[d_roi[hue] == level]
+            ll = d.set_index(sn_col)[models] - k
+            ll = ll.sub(ll[models[0]], axis=0)                 # log Bayes factor vs models[0], per participant
+
+            if subjects:
+                ax.plot(x + offsets[l], ll.to_numpy().T, color=colors[l], lw=.5, alpha=.2)
+            ax.errorbar(x + offsets[l], ll.mean(), yerr=ll.sem(), color=colors[l],
+                        label=level if (legend and r == len(rois) - 1) else '_nolegend_', **kws)
+
+        ax.set_title(roi)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        if r > 0:
+            sb.despine(ax=ax, left=True)
+            ax.tick_params(left=False)
+        else:
+            sb.despine(ax=ax)
+        if add_zero is not False:
+            ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
+        if evidence is not None:
+            ax.axhline(evidence, lw=.8, color='k', ls='--')
+
+
 # sessions belonging to each training week, used to lay out the behavioural x axis
 WEEKS = {1: (1, 5), 2: (6, 10), 3: (11, 15), 4: (16, 20), 5: (21, 24)}
 

@@ -300,17 +300,43 @@ def make_likelihood_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
     LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
+def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
+    """Likelihood of every model of the model family, one row per (sn, session, Hem, roi).
+
+    The columns are the family's model names, in the family's order, so the mean over
+    participants of a cell can go straight into ``PcmPy.vis.plot_tree``.
+    """
+    rois = gl.rois[atlas_name]
+
+    LL = []
+    for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
+        path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
+        with open(path, 'rb') as f:
+            T = pickle.load(f)
+
+        ll            = T.likelihood.copy()
+        ll['sn']      = sn
+        ll['session'] = session
+        ll['Hem']     = H
+        ll['roi']     = roi
+        LL.append(ll)
+
+    LL = pd.concat(LL, ignore_index=True)
+    LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_family.likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+
+
 # Step name -> function, grouped by what the step produces: the Gs, then the PCM fits
 # over them, then the tsvs collected from either.
 FUNC = {
     'G_rois'                        : calc_G_rois,
-    'fit_component'                 : fit_component_model_rois,
+    'fit_component_model_rois'      : fit_component_model_rois,
     'dataframe_distance_rois'       : make_rois_distance_dataframe,
     'dataframe_noise_ceiling'       : make_noise_ceiling_dataframe,
     'dataframe_model_correlation'   : make_model_correlation_dataframe,
     'dataframe_scaling'             : make_scaling_dataframe,
     'dataframe_component_weight'    : make_component_weight_dataframe,
     'dataframe_component_likelihood': make_likelihood_dataframe,
+    'dataframe_model_family'        : make_model_family_dataframe,
 }
 
 

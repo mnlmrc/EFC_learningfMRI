@@ -1,6 +1,7 @@
 import PcmPy as pcm
 import os
 import itertools
+import functools
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Sequence
@@ -78,20 +79,20 @@ def subj_spec_models(order=None, glm=3):
 
     finger  = np.zeros((8, 5))
     pattern = np.zeros_like(finger)
-    flexion = np.zeros(8)
+    #flexion = np.zeros(8)
     for i, ch in enumerate(order):
-        flexion[i] = FLEXION[ch]
+        #flexion[i] = FLEXION[ch]
         finger[i]  = FINGER[ch]
         pattern[i] = PATTERN[ch]
 
     G_finger  = C @ (finger @ finger.T)
     G_pattern = C @ (pattern @ pattern.T)
-    G_flexion = C @ np.outer(flexion, flexion)
+    #G_flexion = C @ np.outer(flexion, flexion)
 
-    return G_finger, G_pattern, G_flexion
+    return G_finger, G_pattern #, G_flexion
 
 
-def base_model(glm, Hem, roi, order=None, sns=gl.participants, session=3):
+def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session=3):
     """Group-mean observed G of one ROI: the empirical baseline geometry.
 
     The crossvalidated Gs that :func:`scripts.pattern.calc_G_rois` writes per subject,
@@ -129,7 +130,25 @@ def base_model(glm, Hem, roi, order=None, sns=gl.participants, session=3):
     return np.mean(Gs, axis=0)
 
 
-def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False):
+@functools.lru_cache(maxsize=None)
+def _read_behav(fname):
+    return pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, fname), sep='\t')
+
+
+def behav_model(order, measure='MD', fname='efc1_chord.tsv'):
+    """Feature model of a behavioural measure from a normative dataset: the measure is
+    averaged per chord over everyone in ``fname``, so only the chord ``order`` is
+    subject specific. Chords that differ more in it get more distinct patterns."""
+    df = _read_behav(fname)
+
+    values    = pd.to_numeric(df[measure], errors='coerce')
+    per_chord = values.groupby(df['chordID']).mean()     
+    v         = per_chord.loc[order].to_numpy()  
+
+    return C @ np.outer(v, v)
+
+
+def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
     """Second moment matrix of every model, keyed by name, for one subject.
 
     The one place the model set is defined: :func:`make_models` wraps these into the
@@ -147,7 +166,8 @@ def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False):
 
     ``Hem`` and ``roi`` add the ROI's ``base`` matrix (see :func:`base_model`), last, so
     the other components keep their index in ``theta``. ``force`` adds the three force
-    matrices, which are off by default.
+    matrices, which are off by default: the participant's own force patterns in
+    ``session``, the session being fitted.
 
     Returns a dict name -> (8, 8) G, in component order.
     """
@@ -157,27 +177,27 @@ def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False):
 
     v_tr_untr = np.where(trained, -1.0, 1.0)          # trained -1, untrained +1, as in fixed_models
 
-    G_finger, G_pattern, G_flexion = subj_spec_models(order=order)
+    G_finger, G_pattern = subj_spec_models(order=order)
 
     G = {'type'     : C @ np.outer(v_tr_untr, v_tr_untr),
          'trained'  : C @ np.diag(trained.astype(float)),
          'untrained': C @ np.diag((~trained).astype(float)),
          'finger'   : G_finger,
          'pattern'  : G_pattern,
-         'flexion'  : G_flexion}
+         'MD'       : behav_model(order)}
 
     if force:
         for metric in ('raw', 'abs', 'der'):
-            fname             = f'G_obs_raw.within_session.3.force.{metric}.npy'
+            fname             = f'G_obs_raw.within_session.{session}.force.{metric}.npy'
             G[f'force_{metric}'] = G_sorted(np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname)), sn, order)
 
     if Hem is not None and roi is not None:
-        G['base'] = base_model(glm, Hem, roi, order)  # on the same chord order as every other model
+        G['group_geometry'] = group_geometry_model(glm, Hem, roi, order)  # on the same chord order as every other model
 
     return G
 
 
-def make_models(sn, glm=3, Hem=None, roi=None, force=False):
+def make_models(sn, glm=3, Hem=None, roi=None, force=False, comp_names=None, session=3):
     """The model list and the component names for one subject.
 
     The matrices come from :func:`model_Gs`, on the subject's own trained-first chord
@@ -186,15 +206,21 @@ def make_models(sn, glm=3, Hem=None, roi=None, force=False):
     the structural components only. ``base`` goes last, so the other components keep
     their index in ``theta``, and it is a component only -- it is not fitted on its own
     as a fixed model.
+
+    ``comp_names`` picks the models to use, by name, in order; the default is every
+    model of :func:`model_Gs`. ``session`` is the session whose force patterns the
+    force models are built from.
     """
 
-    G = model_Gs(sn, glm=glm, Hem=Hem, roi=roi, force=force)
+    G = model_Gs(sn, glm=glm, Hem=Hem, roi=roi, force=force, session=session)
+
+    if comp_names is None:
+        comp_names = list(G)
 
     M = [pcm.FixedModel('null', np.zeros((8, 8)))]
-    M += [pcm.FixedModel(name, G[name]) for name in G if name != 'base']
+    M += [pcm.FixedModel(name, G[name]) for name in comp_names if name != 'base']
 
-    comp_names = list(G)
-    Gc         = [G[name] / np.trace(G[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
+    Gc = [G[name] / np.trace(G[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
 
     M.append(pcm.ComponentModel('component', np.array(Gc)))
     M.append(pcm.FreeModel('ceil', 8))
@@ -208,7 +234,8 @@ def _dump(obj, fname, path):
         pickle.dump(obj, f)
 
 
-def fit_component_model(loader, sessions=None):
+def fit_component_model(loader, sessions=None, comp_names=None, base_names=('finger', 'pattern', 'MD', 'group_geometry'),):
+
     """Fit the models of :func:`make_models` to every (subject, Hem, roi, session).
 
     Follows the fitting conventions of the pcm-toolbox ``demo_fingers`` notebook:
@@ -229,6 +256,10 @@ def fit_component_model(loader, sessions=None):
     observed G of session 3 over ``gl.participants``, see :func:`base_model` -- so the
     structural components are fitted on top of the empirical baseline geometry rather
     than on the raw patterns.
+
+    ``comp_names`` is passed on to :func:`make_models`. The components are also fitted
+    as a :class:`PcmPy.model.ModelFamily`: ``base_names`` are in every model of the
+    family, and every combination of the other components is added on top of them.
 
     The group fits need every subject of a cell at once, so the datasets are kept as
     the loader yields them -- the loader is the expensive part and only runs once.
@@ -253,18 +284,31 @@ def fit_component_model(loader, sessions=None):
             obs_des = {'cond_vec': cond_vec, 'part_vec': part_vec}
             Y       = pcm.dataset.Dataset(betas, obs_descriptors=obs_des)
 
-            model, comp_names = make_models(data.sn, glm=glm, Hem=data.Hem, roi=data.roi)
+            model, names = make_models(data.sn, glm=glm, Hem=data.Hem, roi=data.roi, comp_names=comp_names, force=True, session=session)
 
-            T_in, _ = pcm.fit_model_individ(Y, model, fit_scale=True, verbose=True, fixed_effect='block')
-            _, theta_in = pcm.fit_model_individ(Y, model[-2], fit_scale=False, verbose=True, fixed_effect='block')
+            # model family: base_names in every model, every combination of the rest on top
+            Gc        = model[-2].Gc
+            fam_names = [n for n in names if n not in base_names]
+            MF = pcm.model.ModelFamily(Gc[[names.index(n) for n in fam_names]],
+                                       basecomponents=Gc[[names.index(n) for n in base_names]],
+                                       comp_names=fam_names)
+            MF.models[0].name = '+'.join(base_names) or 'null'  # PcmPy calls it 'base', which clashes with the ROI component
+
+            T_in, _        = pcm.fit_model_individ(Y, model, fit_scale=True, verbose=True, fixed_effect='block')
+            T_mf, theta_mf = pcm.fit_model_individ(Y, MF, verbose=False, fixed_effect='block', fit_scale=False)
+            _   , theta_in = pcm.fit_model_individ(Y, model[-2], fit_scale=False, verbose=True, fixed_effect='block')
 
             path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
             stem = f'{atlas}.glm{glm}.{session}.{data.Hem}.{data.roi}.p'
             # the names go in with the theta: a component list that changed since the fit
             # (a component added, or fit_scale flipped) is then caught by the reader
             # instead of silently shifting every weight onto the wrong name
-            _dump({'theta': theta_in, 'comp_names': comp_names}, f'component_model.theta_in.{stem}', path)
+            _dump({'theta': theta_in, 'comp_names': names}, f'component_model.theta_in.{stem}', path)
             _dump(T_in,     f'component_model.T_in.{stem}',     path)
+            # theta_mf[i] belongs to MF.models[i]; its components are fam_names in that model, then base_names
+            _dump({'theta': theta_mf, 'model_names': [m.name for m in MF.models],
+                   'comp_names': fam_names, 'base_names': list(base_names)}, f'model_family.theta.{stem}', path)
+            _dump(T_mf,     f'model_family.T.{stem}',           path)
 
 
 @dataclass
