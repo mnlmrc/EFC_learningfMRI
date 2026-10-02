@@ -171,17 +171,17 @@ def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
 
     Returns a dict name -> (8, 8) G, in component order.
     """
+
     chords  = np.array(get_trained_and_untrained(sn)).astype(int)
     order   = chords if order is None else np.asarray(order).astype(int)
-    trained = np.isin(order, chords[:4])              # which slots of `order` this subject trained
 
-    v_tr_untr = np.where(trained, -1.0, 1.0)          # trained -1, untrained +1, as in fixed_models
+    G_tr_untr, G_tr, G_untr = fixed_models()
 
     G_finger, G_pattern = subj_spec_models(order=order)
 
-    G = {'type'     : C @ np.outer(v_tr_untr, v_tr_untr),
-         'trained'  : C @ np.diag(trained.astype(float)),
-         'untrained': C @ np.diag((~trained).astype(float)),
+    G = {'type'     : G_tr_untr,
+         'trained'  : G_tr,
+         'untrained': G_untr,
          'finger'   : G_finger,
          'pattern'  : G_pattern,
          'MD'       : behav_model(order)}
@@ -202,10 +202,8 @@ def make_models(sn, glm=3, Hem=None, roi=None, force=False, comp_names=None, ses
 
     The matrices come from :func:`model_Gs`, on the subject's own trained-first chord
     order -- the order its data are in. Pass ``Hem`` and ``roi`` to add the ROI's
-    ``base`` component (see :func:`base_model`); without them the component model holds
-    the structural components only. ``base`` goes last, so the other components keep
-    their index in ``theta``, and it is a component only -- it is not fitted on its own
-    as a fixed model.
+    ``group_geometry`` component (see :func:`group_geometry_model`); without them the
+    component model holds the structural components only.
 
     ``comp_names`` picks the models to use, by name, in order; the default is every
     model of :func:`model_Gs`. ``session`` is the session whose force patterns the
@@ -218,7 +216,7 @@ def make_models(sn, glm=3, Hem=None, roi=None, force=False, comp_names=None, ses
         comp_names = list(G)
 
     M = [pcm.FixedModel('null', np.zeros((8, 8)))]
-    M += [pcm.FixedModel(name, G[name]) for name in comp_names if name != 'base']
+    M += [pcm.FixedModel(name, G[name]) for name in comp_names if name != 'null']  # null is already first
 
     Gc = [G[name] / np.trace(G[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
 
@@ -234,7 +232,7 @@ def _dump(obj, fname, path):
         pickle.dump(obj, f)
 
 
-def fit_component_model(loader, sessions=None, comp_names=None, base_names=('finger', 'pattern', 'MD', 'group_geometry'),):
+def fit_component_model(loader, sessions=None, comp_names=None, base_names=()):
 
     """Fit the models of :func:`make_models` to every (subject, Hem, roi, session).
 
@@ -289,10 +287,11 @@ def fit_component_model(loader, sessions=None, comp_names=None, base_names=('fin
             # model family: base_names in every model, every combination of the rest on top
             Gc        = model[-2].Gc
             fam_names = [n for n in names if n not in base_names]
+            base      = [names.index(n) for n in base_names]
             MF = pcm.model.ModelFamily(Gc[[names.index(n) for n in fam_names]],
-                                       basecomponents=Gc[[names.index(n) for n in base_names]],
+                                       basecomponents=Gc[base] if base else None,
                                        comp_names=fam_names)
-            MF.models[0].name = '+'.join(base_names) or 'null'  # PcmPy calls it 'base', which clashes with the ROI component
+            MF.models[0].name = '+'.join(base_names) or 'null'  # PcmPy calls it 'base'; with no base components it is the null model
 
             T_in, _        = pcm.fit_model_individ(Y, model, fit_scale=True, verbose=True, fixed_effect='block')
             T_mf, theta_mf = pcm.fit_model_individ(Y, MF, verbose=False, fixed_effect='block', fit_scale=False)

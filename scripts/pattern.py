@@ -243,6 +243,12 @@ def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
     exponentiates it to weights -- one per component -- and writes one long-form row
     per component to ``component_model.<atlas_name>.glm<glm>.tsv`` in the pcm dir.
 
+    ``log_bf`` is each component's log Bayes factor from the model family fit of the
+    same cell (``PcmPy`` ``ModelFamily.component_bayesfactor``, AIC-corrected): the
+    evidence for the models with the component against those without, averaged over
+    every combination of the other components. It is NaN for the family's base
+    components, which are in every model.
+
     The component names are the ones the fit itself stored next to its theta, so a
     component list that has changed since the fit cannot shift the weights onto the
     wrong names -- a pickle from before the names were stored raises instead.
@@ -269,7 +275,21 @@ def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
         # which is why the components are sliced by name count and not by dropping the tail
         weight = np.exp(np.array(fit['theta'][0][:len(comp_names)]))
 
-        df_tmp = pd.DataFrame({'weight': weight.squeeze(), 'component': comp_names})
+        # log Bayes factor of each component from the model family fit of the same cell
+        stem = f'{atlas_name}.glm{glm}.{session}.{H}.{roi}.p'
+        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta.{stem}'), 'rb') as f:
+            fam_names = list(pickle.load(f)['comp_names'])
+        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{stem}'), 'rb') as f:
+            T_mf = pickle.load(f)
+
+        # only the family's structure is needed, which zero matrices with the same names reproduce
+        MF = pcm.model.ModelFamily(np.zeros((len(fam_names), 8, 8)), comp_names=fam_names)
+        bf = MF.component_bayesfactor(T_mf.likelihood, method='AIC')[0]
+        bf = dict(zip(fam_names, bf))          # the family's base components are in every model: no Bayes factor
+
+        df_tmp = pd.DataFrame({'weight'   : weight.squeeze(), 
+                               'component': comp_names,
+                               'log_bf'   : [bf.get(c, np.nan) for c in comp_names]})
         df_tmp['sn']      = sn
         df_tmp['Hem']     = H
         df_tmp['roi']     = roi
@@ -283,7 +303,7 @@ def make_likelihood_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
 
     rois = gl.rois[atlas_name]
 
-    LL = pd.DataFrame()
+    LL = []
     for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
         path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'component_model.T_in.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
         with open(path, 'rb') as f:
@@ -294,9 +314,9 @@ def make_likelihood_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
         ll['session'] = session
         ll['Hem']     = H
         ll['roi']     = roi
+        LL.append(ll)
 
-        LL = pd.concat([LL, ll])
-
+    LL = pd.concat(LL, ignore_index=True)
     LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
