@@ -200,9 +200,11 @@ def _force_prediction_cell(cell, metrics, ref_session, group=False):
 
         for n, name in enumerate(names):
             predicted[f'{metric}_{name}'] = X[:, n + 1]
+
         predicted[f'{metric}_pred']      = X @ B
         predicted[f'{metric}_resid']     = y - X @ B
         predicted[f'{metric}_intercept'] = B[0]
+        
         for n, name in enumerate(names):
             predicted[f'{metric}_slope_{name}'] = B[n + 1]
 

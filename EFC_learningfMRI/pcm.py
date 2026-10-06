@@ -40,33 +40,33 @@ PATTERN = {
      11911: np.array([ 1,  1,  0,  1,  1])
 }
 
-FLEXION = {
-    21911: 1,
-    92122: 3,
-    91211: 1,
-    22911: 2,
-    21291: 2,
-    12129: 2,
-    12291: 2,
-    11911: 0
-}
+# FLEXION = {
+#     21911: 1,
+#     92122: 3,
+#     91211: 1,
+#     22911: 2,
+#     21291: 2,
+#     12129: 2,
+#     12291: 2,
+#     11911: 0
+# }
 
 
 def fixed_models():
     
     # trained untrained
     v_tr_untr = np.array([-1, -1, -1, -1, 1, 1, 1, 1])
-    G_tr_untr = C @ np.outer(v_tr_untr, v_tr_untr)
+    G_tr_untr = C @ np.outer(v_tr_untr, v_tr_untr) @ C
 
     # trained
     tr = np.zeros(8)
     tr[:4] = 1
-    G_tr = C @ np.diag(tr)
+    G_tr = C @ np.diag(tr) @ C
 
     # untrained
     untr = np.zeros(8)
     untr[4:] = 1
-    G_untr = C @ np.diag(untr)
+    G_untr = C @ np.diag(untr) @ C
 
     return G_tr_untr, G_tr, G_untr
 
@@ -85,8 +85,8 @@ def subj_spec_models(order=None, glm=3):
         finger[i]  = FINGER[ch]
         pattern[i] = PATTERN[ch]
 
-    G_finger  = C @ (finger @ finger.T)
-    G_pattern = C @ (pattern @ pattern.T)
+    G_finger  = C @ (finger @ finger.T) @ C
+    G_pattern = C @ (pattern @ pattern.T) @ C
     #G_flexion = C @ np.outer(flexion, flexion)
 
     return G_finger, G_pattern #, G_flexion
@@ -145,7 +145,7 @@ def behav_model(order, measure='MD', fname='efc1_chord.tsv'):
     per_chord = values.groupby(df['chordID']).mean()     
     v         = per_chord.loc[order].to_numpy()  
 
-    return C @ np.outer(v, v)
+    return C @ np.outer(v, v) @ C
 
 
 def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
@@ -188,8 +188,9 @@ def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
 
     if force:
         for metric in ('raw', 'abs', 'der'):
-            fname             = f'G_obs_raw.within_session.{session}.force.{metric}.npy'
-            G[f'force_{metric}'] = G_sorted(np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname)), sn, order)
+            fname                = f'G_obs_raw.within_session.{session}.force.{metric}.npy'
+            G_force              = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
+            G[f'force_{metric}'] = C @ G_force @ C
 
     if Hem is not None and roi is not None:
         G['group_geometry'] = group_geometry_model(glm, Hem, roi, order)  # on the same chord order as every other model
