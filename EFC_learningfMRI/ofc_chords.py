@@ -49,8 +49,9 @@ Three things differ from the paper's scheme:
 Variables
 ---------
 x       finger forces (n_fingers,), the state of the plant.
-u       motor commands, one signed command per finger (n_fingers,).
-        Positive part goes through E_flex, negative part through E_ext.
+u       motor commands (n_commands,). One per finger by default; more than
+        the fingers for a redundant hand. Positive part goes through E_flex,
+        negative part through E_ext.
 y       sensed forces: x delayed by `delay` steps plus sensory noise.
 A, B    true plant dynamics. A = force decay, B = gain * enslaving matrix.
 Â, B̂    the brain's internal (forward) model of A and B. Â = A is assumed
@@ -62,8 +63,8 @@ G       policy gain: u = G (x̄ - Â x̂). Plays the role of the paper's L.
 x̄_c     target force pattern of chord c.
 Q_c, R  cost weights. Q_c weights force errors (task term q(x)),
         R weights motor commands (effort term r(u)).
-E_flex  enslaving matrix for flexion:  E_flex[i, j] = force on finger i per
-        unit command to finger j (diagonal = 1).
+E_flex  (n_fingers × n_commands): E_flex[i, j] = force on finger i per unit
+        positive command j. Square with unit diagonal = enslaving matrix.
 E_ext   same for extension. If E_ext == E_flex the plant is linear (one B for
         every chord). If they differ, the plant is piecewise linear and the
         best linear model B̂ depends on which chord you practise.
@@ -200,11 +201,25 @@ def make_enslaving(n_fingers: int = 5, spread: float = 0.35, decay: float = 1.0,
 
 @dataclass
 class Plant:
+    """The hand: n_fingers forces driven by n_commands motor commands.
+
+    E_flex, E_ext are (n_fingers × n_commands): column j is the force pattern
+    that command j produces on the five fingers. With n_commands = n_fingers
+    and a unit diagonal this is the usual enslaving matrix. With more commands
+    than fingers (e.g. np.hstack of two matrices) the hand is redundant: many
+    command patterns give the same forces, and the effort/noise cost decides.
+
+    Motor noise is signal-dependent (paper Box 2), with its own constant per
+    command and per direction: positive commands (through E_flex) use
+    motor_sdn, negative commands (through E_ext) use motor_sdn_ext. Each can
+    be a scalar or an array (n_commands,).
+    """
     E_flex: np.ndarray
     E_ext: np.ndarray | None = None      # None -> same as E_flex (linear plant)
     dt: float = 0.01                     # s per step
     tau: float = 0.06                    # force time constant (s)
-    motor_sdn: float = 0.08              # signal-dependent command noise (σ = sdn·|u|)
+    motor_sdn: float | np.ndarray = 0.08          # σ = sdn·|u| for positive commands
+    motor_sdn_ext: float | np.ndarray | None = None   # same for negative commands (None -> motor_sdn)
     motor_const: float = 0.03            # constant command noise σ
     force_sd: float = 0.0                # additive force noise σ
     sensory_sd: float = 0.05             # sensory noise σ
@@ -213,11 +228,32 @@ class Plant:
     def __post_init__(self):
         if self.E_ext is None:
             self.E_ext = self.E_flex.copy()
+        if self.motor_sdn_ext is None:
+            self.motor_sdn_ext = self.motor_sdn
+        if self.E_ext.shape != self.E_flex.shape:
+            raise ValueError("E_flex and E_ext must have the same shape (n_fingers, n_commands)")
 
     @property
     def n(self) -> int:
         """Number of fingers (size of the state x)."""
         return self.E_flex.shape[0]
+
+    @property
+    def m(self) -> int:
+        """Number of motor commands (size of u)."""
+        return self.E_flex.shape[1]
+
+    def noise_sdn(self, u: np.ndarray) -> np.ndarray:
+        """Signal-dependent noise constant c of each command, chosen by the
+        direction of u: motor_sdn where u ≥ 0, motor_sdn_ext where u < 0. (m,)"""
+        pos = np.broadcast_to(self.motor_sdn, (self.m,))
+        neg = np.broadcast_to(self.motor_sdn_ext, (self.m,))
+        return np.where(u >= 0, pos, neg)
+
+    def noise_sd(self, u: np.ndarray) -> np.ndarray:
+        """Standard deviation of the motor noise on each command:
+        σ = c·|u| + motor_const (paper Box 2, Eq. V). (m,)"""
+        return self.noise_sdn(u) * np.abs(u) + self.motor_const
 
     @property
     def gain(self) -> float:
@@ -252,10 +288,10 @@ class Plant:
         """Plant box of Figure I: x_{t+1} = A x_t + B (u_t + ε_t).
 
         ε_t is signal-dependent motor noise as in paper Box 2, Eq. V:
-        σ = motor_sdn·|u| + motor_const, ε = σ · N(0, 1) per finger. It is added
-        to the command before the enslaving matrix, so it spreads across fingers.
+        σ = c·|u| + motor_const (noise_sd), ε = σ · N(0, 1) per command. It is
+        added to the command before E, so it spreads across fingers.
         """
-        noise = (self.motor_sdn * np.abs(u) + self.motor_const) * rng.standard_normal(self.n)
+        noise = self.noise_sd(u) * rng.standard_normal(self.m)
         u_noisy = u + noise
         x_next = self.A @ x + self.gain * self.drive(u_noisy)
         return x_next
@@ -277,7 +313,7 @@ class Plant:
 @dataclass
 class InternalModel:
     A_hat: np.ndarray    # Â: believed force decay (n × n)
-    B_hat: np.ndarray    # B̂: believed effect of commands on force (n × n); learned
+    B_hat: np.ndarray    # B̂: believed effect of commands on force (n × m); learned
 
     def copy(self) -> "InternalModel":
         return InternalModel(self.A_hat.copy(), self.B_hat.copy())
@@ -288,8 +324,13 @@ def initial_model(plant: Plant, enslaving_guess: np.ndarray | None = None) -> In
 
     Default guess for B̂ = gain * identity: the brain believes each command only
     moves its own finger (no knowledge of enslaving). Â is assumed known (the
-    brain knows how force decays)."""
-    guess = np.eye(plant.n) if enslaving_guess is None else enslaving_guess
+    brain knows how force decays). With redundant commands (m > n) there is no
+    obvious naive guess, so enslaving_guess (n × m) must be given."""
+    if enslaving_guess is None:
+        if plant.m != plant.n:
+            raise ValueError("with n_commands != n_fingers, pass enslaving_guess (n × m)")
+        enslaving_guess = np.eye(plant.n)
+    guess = np.asarray(enslaving_guess, float)
     return InternalModel(plant.A.copy(), plant.gain * guess)
 
 
@@ -401,13 +442,17 @@ def augment_delay(A: np.ndarray, B: np.ndarray, d: int):
 # ---------------------------------------------------------------------------
 
 
-def policy_gain(model: InternalModel, Q: np.ndarray, R: np.ndarray) -> np.ndarray:
+def policy_gain(model: InternalModel, Q: np.ndarray, R: np.ndarray,
+                noise_sdn: np.ndarray | None = None) -> np.ndarray:
     """Gain G of the "Control policy" box: u = argmin [q(x) + r(u)], one step ahead.
 
     Inputs, in the paper's notation:
-        model   Â, B̂  (the INTERNAL model; the true A, B are never used)
-        Q       paper's q(x) as a matrix: error cost  = (x - x̄)ᵀ Q (x - x̄)
-        R       paper's r(u) as a matrix: effort cost = uᵀ R u
+        model      Â, B̂  (the INTERNAL model; the true A, B are never used)
+        Q          paper's q(x) as a matrix: error cost  = (x - x̄)ᵀ Q (x - x̄)
+        R          paper's r(u) as a matrix: effort cost = uᵀ R u  (m × m)
+        noise_sdn  optional: signal-dependent noise constant c of each command
+                   (m,), see Plant.noise_sdn. If given, the cost also includes
+                   the extra error the command's own noise will cause (below).
 
     One-step cost
     -------------
@@ -440,10 +485,30 @@ def policy_gain(model: InternalModel, Q: np.ndarray, R: np.ndarray) -> np.ndarra
     both"). Because holding a force costs effort, the force settles slightly
     short of x̄; for one finger the shortfall is a fraction r / (r + q·dt/tau).
 
+    Redundant commands
+    ------------------
+    With more commands than fingers (m > n) many u give the same forces. The
+    effort term then decides how the work is shared across commands (paper,
+    "Distribution of work across multiple effectors"): with R = r·I it is
+    spread as evenly as possible.
+
+    Noise-aware cost (noise_sdn given)
+    ----------------------------------
+    Command j carries noise with sd c_j·|u_j| (Box 2), which moves the next
+    force by B̂[:, j]·noise. Its expected contribution to the error cost is
+        E[(B̂ ε)ᵀ Q (B̂ ε)] = Σ_j c_j² (B̂ᵀQB̂)_jj · u_j²  =  uᵀ D u,
+        D = diag(c_j² (B̂ᵀQB̂)_jj)
+    i.e. the paper's "u² as variability" reading of the effort term: noisy
+    commands are expensive in proportion to how noisy they are. It simply
+    adds D to R. With redundant commands this steers the work away from noisy
+    commands/directions; with m = n it only weakens noisy commands slightly.
+
     Returns G, (n_commands × n_fingers).
     """
     B = model.B_hat
     cost_per_command = R + B.T @ Q @ B          # effort + error the command itself causes
+    if noise_sdn is not None:                   # + expected error from the command's own noise
+        cost_per_command = cost_per_command + np.diag(noise_sdn ** 2 * np.diag(B.T @ Q @ B))
     benefit = B.T @ Q                           # how much each command moves forces toward the target
     return np.linalg.solve(cost_per_command, benefit)
 
@@ -497,13 +562,20 @@ class Controller:
     S: np.ndarray        # reads the current force out of z
 
 
-def design_controller(model: InternalModel, plant: Plant, target: np.ndarray, Q: np.ndarray, R: np.ndarray) -> Controller:
+def design_controller(model: InternalModel, plant: Plant, target: np.ndarray, Q: np.ndarray,
+                      R: np.ndarray, noise_aware: bool = False) -> Controller:
     """Build the full OFC controller for one chord from the INTERNAL model.
 
     1. forward model    (Â, B̂) augmented with the sensory delay
     2. control policy   G from the cost function (Q, R), see policy_gain
     3. integration      K from the assumed motor and sensory noise
     Plant noise parameters are assumed known to the brain.
+
+    R is (n_commands × n_commands). noise_aware=True adds the expected cost of
+    signal-dependent noise to the policy (policy_gain). Noise depends on the
+    direction of each command, so the policy is designed twice: once without
+    the noise term to find the direction of each command at the target, then
+    with the noise constants of those directions.
     """
     d, n = plant.delay, plant.n
 
@@ -514,6 +586,9 @@ def design_controller(model: InternalModel, plant: Plant, target: np.ndarray, Q:
     # 2. control policy u = G (x̄ - Â x̂). It acts on the current force only, so
     #    it needs the plain (non-augmented) Â, B̂.
     G = policy_gain(model, Q, R)
+    if noise_aware:
+        u_hold = G @ (target - model.A_hat @ target)
+        G = policy_gain(model, Q, R, noise_sdn=plant.noise_sdn(u_hold))
 
     # 3. Kalman gain K.
     #    W: how much the plant is expected to drift from the prediction each
@@ -522,7 +597,7 @@ def design_controller(model: InternalModel, plant: Plant, target: np.ndarray, Q:
     #    the policy sends when the force is at the target: G (x̄ - Â x̄).
     #    Delayed copies are exact, so only a tiny W there.
     u_hold = G @ (target - model.A_hat @ target)
-    sd_u = plant.motor_sdn * np.abs(u_hold) + plant.motor_const
+    sd_u = plant.noise_sd(u_hold)
     Wx = model.B_hat @ np.diag(sd_u ** 2) @ model.B_hat.T + (plant.force_sd ** 2 + 1e-8) * np.eye(n)
     W = 1e-6 * np.eye(N)
     W[:n, :n] += Wx
@@ -547,14 +622,15 @@ def simulate_trial(plant: Plant, ctrl: Controller, n_steps: int,
     Returns dict with:
       x      (n_steps+1, n) true forces
       y      (n_steps+1, n) sensed forces (y[t] ≈ x[t-d])
-      u      (n_steps, n)   commands sent (efference copy, before noise)
+      u      (n_steps, m)   commands sent (efference copy, before noise)
       x_hat  (n_steps+1, n) estimate of the current force
+    n = fingers, m = commands.
     """
     n, d = plant.n, plant.delay
     x0 = np.zeros(n) if x0 is None else x0
     x = np.zeros((n_steps + 1, n)); x[0] = x0
     y = np.zeros((n_steps + 1, n))
-    u = np.zeros((n_steps, n))
+    u = np.zeros((n_steps, plant.m))
     x_hat = np.zeros((n_steps + 1, n))
 
     # the brain starts with a correct estimate: forces at x0, and were at x0
@@ -600,10 +676,11 @@ def align_feedback(trial: dict, plant: Plant):
     The last d commands are dropped: their effect had not been sensed yet when
     the trial ended.
 
-    Returns X0 (x_t), X1 (x_{t+1}), U (u_t), each (T, n), one row per step.
+    Returns X0 (x_t) and X1 (x_{t+1}), each (T, n_fingers), and U (u_t),
+    (T, n_commands), one row per step.
     """
     d = plant.delay
-    y, u = trial["y"], trial["u"]      # y: (n_steps+1, n) sensed,  u: (n_steps, n) sent
+    y, u = trial["y"], trial["u"]      # y: (n_steps+1, n) sensed,  u: (n_steps, m) sent
     xs = y[d:]
     T = min(len(xs) - 1, len(u))
     return xs[:T], xs[1:T + 1], u[:T]
