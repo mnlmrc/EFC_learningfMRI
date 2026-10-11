@@ -772,66 +772,6 @@ def default_schedule(n_chords: int = 8, trained: Sequence[int] = (0, 1, 2, 3),
     return sessions
 
 
-def run_experiment(plant: Plant, targets: np.ndarray, schedule: list[Session],
-                   cost_fn: Callable[[np.ndarray], tuple] = cost_matrices,
-                   mode: str = "global", lr: float = 0.05, n_steps: int = 100,
-                   init_model: InternalModel | None = None,
-                   rng: np.random.Generator | None = None, shuffle: bool = True,
-                   redesign: str = "session", learning: str = "gradient",
-                   sigma: float = 0.02) -> dict:
-    """Run a full training schedule.
-
-    The internal model is updated after every learning trial, with
-    learning='gradient' (update_model, step size lr) or
-    learning='perturb' (update_model_perturb, perturbation size sigma). The controller
-    (G, K) is recomputed from the current model either at the first trial of
-    each chord in a session (redesign='session', fast; think of it as the policy
-    being re-optimized between sessions) or before every trial ('trial', slow).
-
-    Returns dict:
-      'tests'   {session_key: list over chords of list of trial dicts}
-      'models'  {session_key: list of B̂ per chord (copy) at that session}
-      'bank'    final ModelBank
-    session_key = (day, label)
-    """
-    if learning not in ("gradient", "perturb"):
-        raise ValueError("learning must be 'gradient' or 'perturb'")
-    rng = np.random.default_rng() if rng is None else rng
-    n_chords = targets.shape[0]
-    base = initial_model(plant) if init_model is None else init_model
-    bank = ModelBank(base, n_chords, mode)
-    costs = [cost_fn(targets[c]) for c in range(n_chords)]   # (Q_c, R) per chord
-
-    tests: dict = {}
-    models: dict = {}
-    for s in schedule:
-        order = np.repeat(np.asarray(s.chords), s.n_reps)
-        if shuffle:
-            order = rng.permutation(order)
-        rec = [[] for _ in range(n_chords)] if s.record else None
-        ctrl_cache: dict = {}
-        for c in order:
-            model = bank.get(c)
-            Q, R = costs[c]
-            # optimal controller for the CURRENT internal model
-            if c not in ctrl_cache or (s.learn and redesign == "trial"):
-                ctrl_cache[c] = design_controller(model, plant, targets[c], Q, R)
-            trial = simulate_trial(plant, ctrl_cache[c], n_steps, rng)
-            # learn from the forward model's prediction errors
-            if s.learn:
-                if learning == "gradient":
-                    bank.set(c, update_model(model, trial, plant, lr))
-                else:
-                    bank.set(c, update_model_perturb(model, trial, plant, sigma, rng))
-            if rec is not None:
-                rec[c].append(trial)
-        if s.record:
-            key = (s.day, s.label)
-            tests[key] = rec
-            models[key] = [bank.get(c).B_hat.copy() for c in range(n_chords)]
-    return {"tests": tests, "models": models, "bank": bank}
-
-
 # ---------------------------------------------------------------------------
 # 10. Analysis
 #     Measures computed from simulated trials, as you would from real data.
