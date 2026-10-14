@@ -579,6 +579,96 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
     return pd.DataFrame(rows)
 
 
+def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Diff', roi_col='roi', subject_col='sn', coef='Intercept'):
+    """Across-subject OLS of ``y`` on ``regressor``, one fit per ROI / ``x`` level.
+
+    Fits ``y ~ regressor`` over subjects within each ROI and session and reports
+    the ``coef`` term (by default the intercept: the ``y`` left once the
+    ``regressor`` is zero). ``y`` and ``regressor`` may come from different tables;
+    rows are matched on ``subject_col`` and ``x`` (and ``roi_col`` too, if
+    ``df_x`` has one), never on row order. E.g. the trained - untrained neural
+    angle against the trained - untrained force-derivative angle::
+
+        diff_neural = util.diff_trained_untrained(dist_neural_g, 'theta', on=['session', 'sn', 'roi', 'Hem'])
+        diff_force  = util.diff_trained_untrained(dist_force_g_der, 'theta', on=['session', 'sn'])
+        intercepts  = util.regress_im_sess(diff_neural[diff_neural.Hem == 'L'], diff_force, rois)
+        print(intercepts[['roi', 'session', 'coef', 'ci_low', 'ci_high', 'tval', 'pval']])
+
+    Parameters
+    ----------
+    df_y : pandas.DataFrame
+        Table holding the response ``y``, one row per subject / ROI / ``x`` level.
+    df_x : pandas.DataFrame
+        Table holding the ``regressor``, one row per subject / ``x`` level (and
+        per ROI, if it has a ``roi_col`` column). May be the same table as ``df_y``.
+    rois : list, optional
+        ROIs to fit, in order (default: all in ``df_y[roi_col]``).
+    x : str, optional
+        Column whose levels are fitted separately (default ``'session'``).
+    y : str, optional
+        Column of ``df_y`` holding the response (default ``'Diff'``).
+    regressor : str, optional
+        Column of ``df_x`` holding the predictor (default ``'Diff'``).
+    roi_col : str, optional
+        Column holding the ROI names (default ``'roi'``); ``None`` to fit the
+        whole table at once, without splitting it by ROI.
+    subject_col : str, optional
+        Column identifying the subject (default ``'sn'``).
+    coef : {'Intercept', 'slope'}, optional
+        Term to report (default ``'Intercept'``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ROI / ``x`` level, with columns ``coef``, ``se``, ``ci_low``,
+        ``ci_high`` (95%), ``tval``, ``pval``, ``n`` (subjects), ``r2``, plus the
+        ``x`` column and, unless ``roi_col`` is None, ``roi_col`` (ordered as ``rois``).
+    """
+    import statsmodels.formula.api as smf   # heavy; only this helper needs it
+
+    term = {'Intercept': 'Intercept', 'slope': '_x'}[coef]
+
+    if roi_col is None:
+        rois = [None]
+    elif rois is None:
+        rois = list(df_y[roi_col].unique())
+
+    on   = [subject_col, x] + ([roi_col] if roi_col is not None and roi_col in df_x.columns else [])
+    data = df_y[[c for c in [subject_col, x, roi_col] if c is not None] + [y]].rename(columns={y: '_y'}) \
+        .merge(df_x[on + [regressor]].rename(columns={regressor: '_x'}), on=on, validate='many_to_one')
+
+    rows = []
+    for roi in rois:
+
+        data_roi = data if roi_col is None else data[data[roi_col]==roi]
+
+        for level in np.sort(data_roi[x].unique()):
+
+            data_level = data_roi[data_roi[x]==level].dropna(subset=['_y', '_x'])
+            if data_level[subject_col].duplicated().any():
+                raise ValueError(f'more than one row per {subject_col} in {x}={level}'
+                                 + ('' if roi_col is None else f', {roi_col}={roi}'))
+
+            res    = smf.ols('_y ~ _x', data=data_level).fit()
+            lo, hi = res.conf_int().loc[term]
+            row = {x        : level,
+                   'coef'   : res.params[term],
+                   'se'     : res.bse[term],
+                   'ci_low' : lo,
+                   'ci_high': hi,
+                   'tval'   : res.tvalues[term],
+                   'pval'   : res.pvalues[term],
+                   'n'      : int(res.nobs),
+                   'r2'     : res.rsquared}
+            rows.append(row if roi_col is None else {roi_col: roi, **row})
+
+    out = pd.DataFrame(rows)
+    if roi_col is not None:
+        out[roi_col] = pd.Categorical(out[roi_col], categories=rois, ordered=True)
+        out = out.sort_values([x, roi_col]).reset_index(drop=True)
+    return out
+
+
 def component_bayesfactor(df, components, require_any=(), id_cols=('sn', 'session', 'Hem', 'roi')):
     """AIC-corrected log Bayes factor of each component, from the model family likelihoods.
 

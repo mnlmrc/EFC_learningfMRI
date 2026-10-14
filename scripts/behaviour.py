@@ -142,7 +142,7 @@ def calc_G_force(sns=gl.participants, metrics=('raw', 'abs', 'der'), sessions=('
                     np.save(os.path.join(save_path, f'G_obs_noxval.{fname}.force.{metric}'), G_noxval)
 
 
-def make_force_distance_dataframe(metrics=('raw', 'abs', 'der'), sns=gl.participants, ref_session=3, crossval=False):
+def make_force_distance_dataframe(force_metric=('raw', 'abs', 'der'), sns=gl.participants, ref_sess=3, crossval=False):
     """The neural dataframe's counterpart over the force Gs written by pattern_G_matrix.
 
     Same rows, same columns, with ``metric`` (the force measure) standing in for
@@ -152,16 +152,16 @@ def make_force_distance_dataframe(metrics=('raw', 'abs', 'der'), sns=gl.particip
     sns = gl.participants if sns is None else sns
 
     rows = []
-    for metric, sess in itertools.product(metrics, gl.sessions):
+    for metric, sess in itertools.product(force_metric, gl.sessions):
         for sn in sns:
 
             print(f'doing participant {sn}, session {sess}, force {metric}...')
 
             G = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'G_obs_raw.within_session.{sess}.force.{metric}.npy'))
-            rows += G_matrix.G_rows(G, sn, metric=metric, session=sess)
+            rows += G_matrix.G_rows(G, sn, force_metric=metric, session=sess)
 
     df = pd.DataFrame(rows)
-    df = G_matrix.add_group_reference(df, ['metric', 'pair'], ref_session, crossval)
+    df = G_matrix.add_group_reference(df, ['force_metric', 'pair'], ref_sess, crossval)
     df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t', index=False)
 
 
@@ -203,11 +203,11 @@ if __name__ == '__main__':
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}
     main(args.what, **kwargs)
 
-    if args.what is None:
-        # main('parse_sessions', **kwargs)
-        main('behaviour_trial',   **kwargs)
-        main('behaviour_session', **kwargs)
-        main('force_trial_wide',  **kwargs)
-        main('force_run_wide',    **kwargs)
-        main('force_trial_long',  **kwargs)
-        main('force_session',     **kwargs)
+    # if args.what is None:
+    #     # main('parse_sessions', **kwargs)
+    #     main('behaviour_trial',   **kwargs)
+    #     main('behaviour_session', **kwargs)
+    #     main('force_trial_wide',  **kwargs)
+    #     main('force_run_wide',    **kwargs)
+    #     main('force_trial_long',  **kwargs)
+    #     main('force_session',     **kwargs)

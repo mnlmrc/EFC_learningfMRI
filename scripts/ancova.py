@@ -183,70 +183,72 @@ def make_force_ancova_group_dataframe(force_metrics=('raw', 'abs', 'der'), sns=g
     df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity_ancova.within_session.force.tsv'), sep='\t', index=False)
 
 
-def _force_prediction_cell(cell, metrics, ref_session, group=False):
-    """Fit neural ~ intercept + slope * force (+ slope * group) on the ``ref_session`` pairs of
-    one cell, then predict every session of the cell from its own force geometry (and the
-    ref-session group geometry, the same in every session).
+def _force_prediction_cell(cell, d, ref_sess):
+    """Fit d ~ intercept + slope * d_force + slope * d_group + slope * chord on the ``ref_sess``
+    pairs of one cell, then predict every session of the cell from its own force geometry
+    (and the ref-session group geometry, the same in every session).
 
+    chord is coded +1 (trained) / -1 (untrained). Returns one long-format row per pair, with
+    the observed distance in ``value``.
     """
-    names     = ['force'] + (['group'] if group else [])
-    predicted = cell.drop(columns=[f'{m}_{name}' for m in metrics for name in names]).copy()
-    ref       = (cell.session == ref_session).to_numpy()
+    c   = cell.chord.map({'trained': 1, 'untrained': -1}).to_numpy(dtype=float)
+    X   = np.c_[np.ones(len(cell)), cell[f'{d}_force'], cell[f'{d}_group'],] # c]
+    y   = cell[d].to_numpy()
+    ref = (cell.session == ref_sess).to_numpy()
+    B   = np.linalg.pinv(X[ref]) @ y[ref]
 
-    for metric in metrics:
-        y = cell[metric].to_numpy()
-        X = np.c_[np.ones(len(cell)), cell[[f'{metric}_{name}' for name in names]].to_numpy()]
-        B = np.linalg.pinv(X[ref]) @ y[ref]
+    fit = cell[['sn', 'Hem', 'roi', 'force_metric', 'session', 'chord', 'pair']].copy()
+    fit['distance']    = d
+    fit['value']       = y
+    fit['force']       = X[:, 1]
+    fit['group']       = X[:, 2]
+    fit['pred']        = X @ B
+    fit['resid']       = y - X @ B
+    fit['intercept']   = B[0]
+    fit['slope_force'] = B[1]
+    fit['slope_group'] = B[2]
+    # fit['slope_chord'] = B[3]
 
-        for n, name in enumerate(names):
-            predicted[f'{metric}_{name}'] = X[:, n + 1]
-
-        predicted[f'{metric}_pred']      = X @ B
-        predicted[f'{metric}_resid']     = y - X @ B
-        predicted[f'{metric}_intercept'] = B[0]
-        
-        for n, name in enumerate(names):
-            predicted[f'{metric}_slope_{name}'] = B[n + 1]
-
-    return predicted
+    return fit
 
 
-def make_rois_force_prediction_dataframe(glm=3, atlas_name='ROI', rois=None, sns=gl.participants, metrics=('crossnobis', 'cosine'),
-                                         force_metrics=('abs', 'der'), ref_session=3, chords=('trained', 'untrained'), group=False):
+def make_rois_force_prediction_dataframe(glm      = 3, 
+                                         atlas    = 'ROI',
+                                         rois     = None,
+                                         sns      = gl.participants,
+                                         distance = ('crossnobis', 'cosine'),
+                                         force    = ('abs', 'der'),
+                                         ref_sess = 3,
+                                         chords   = ('trained', 'untrained')):
 
-    """Neural geometry predicted from the subject's own force geometry, with the mapping learnt in ``ref_session``.
+    """Neural geometry predicted from the subject's own force geometry, the ref-session group
+    geometry and the chord (trained/untrained), with the mapping learnt in ``ref_sess``.
 
-    With ``group``, the ref-session group geometry of each pair (the *_group columns) enters
-    the model as a second covariate.
+    Long format: one row per pair and distance, with the distance in the ``distance`` column.
     """
     if rois is None:
-        rois = gl.rois[atlas_name]
+        rois = gl.rois[atlas]
 
-    df = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t')
-    df = df[df.chord.isin(chords) & df.session.isin(gl.sessions)]
-    df = df[['sn', 'Hem', 'roi', 'session', 'chord', 'pair', *metrics, *([f'{m}_group' for m in metrics] if group else [])]]
+    dist_neural = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas}.glm{glm}.tsv'), sep='\t')
+    dist_neural = dist_neural[dist_neural.chord.isin(chords) & dist_neural.session.isin(gl.sessions)]
+    dist_force = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
+    dist_force = dist_force[dist_force.force_metric.isin(force)]
+    dist_force = dist_force.rename(columns={d: f'{d}_force' for d in distance})
 
-    force = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
-
-    model = 'force_group' if group else 'force'
+    dm = dist_neural.merge(dist_force[['sn', 'session', 'pair', 'force_metric', *[f'{d}_force' for d in distance]]],
+                           on=['sn', 'session', 'pair'], how='left')
 
     cells = []
-    for force_metric in force_metrics:
-        f  = force[force.metric == force_metric][['sn', 'session', 'pair', *metrics]]
-        f  = f.rename(columns={m: f'{m}_force' for m in metrics})
-        dm = df.merge(f, on=['sn', 'session', 'pair'], how='left', validate='many_to_one')
-        dm.insert(3, 'force_metric', force_metric)
+    for sn, H, roi, fm, d in itertools.product(sns, gl.Hem, rois, force, distance):
 
-        for sn, H, roi in itertools.product(sns, gl.Hem, rois):
+        print(f'Force prediction ({fm}, {d}, fit on session {ref_sess}), participant {sn}, {H}, {roi}...')
 
-            print(f'{model} prediction ({force_metric}, fit on session {ref_session}), participant {sn}, {H}, {roi}...')
-
-            cell = dm[(dm.sn == sn) & (dm.Hem == H) & (dm.roi == roi)]
-            cells.append(_force_prediction_cell(cell, metrics, ref_session, group))
+        cell = dm[(dm.sn == sn) & (dm.Hem == H) & (dm.roi == roi) & (dm.force_metric == fm)]
+        cells.append(_force_prediction_cell(cell, d, ref_sess))
 
     df_pred = pd.concat(cells, ignore_index=True)
 
-    df_pred.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_{model}_prediction.ref{ref_session}.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+    df_pred.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_force_prediction.ref{ref_sess}.within_session.{atlas}.glm{glm}.tsv'), sep='\t', index=False)
 
     return df_pred
 
@@ -261,7 +263,6 @@ FUNC = {
     'make_rois_ancova_group_force_dataframe': make_rois_ancova_group_force_dataframe,
     'make_rois_ancova_force_dataframe'      : make_rois_ancova_force_dataframe,
     'make_rois_force_prediction_dataframe'  : make_rois_force_prediction_dataframe,
-    'make_rois_force_group_prediction_dataframe': functools.partial(make_rois_force_prediction_dataframe, group=True),
 }
 
 

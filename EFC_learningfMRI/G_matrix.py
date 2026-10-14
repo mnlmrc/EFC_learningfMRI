@@ -179,7 +179,6 @@ def G_rows(G, sn, **labels):
                          'pair'      : '-'.join(sorted([str(chords[ri]), str(chords[ci])])),
                          'crossnobis': D[ri, ci],
                          'cosine'    : 1 - cos[ri, ci],
-                         #'theta'     : np.arccos(cos[ri, ci])
                          })
     return rows
 
