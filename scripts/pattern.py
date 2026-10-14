@@ -12,7 +12,7 @@ import EFC_learningfMRI.G_matrix as G_matrix
 import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
 
-def make_rois_distance_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=False):
+def make_rois_distance_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=True):
 
     sns  = gl.participants if sns is None else sns
     rois = gl.rois[atlas_name]
@@ -350,7 +350,7 @@ def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
 FUNC = {
     'G_rois'                        : calc_G_rois,
     'fit_component_model_rois'      : fit_component_model_rois,
-    'dataframe_distance_rois'       : make_rois_distance_dataframe,
+    'make_rois_distance_dataframe'  : make_rois_distance_dataframe,
     'dataframe_noise_ceiling'       : make_noise_ceiling_dataframe,
     'dataframe_model_correlation'   : make_model_correlation_dataframe,
     'dataframe_scaling'             : make_scaling_dataframe,

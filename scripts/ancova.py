@@ -8,179 +8,158 @@ import pandas as pd
 import EFC_learningfMRI.globals as gl
 
 
-def _ancova_group(y, g, chord, session, h=None, sessions=gl.sessions):
-    """Trained - untrained difference in ``y`` per session, adjusted for the covariates ``g`` and ``h``.
+def _ancova_cell(cell, d, group=True, force=False):
+    """Fit d ~ intercept[sess] + slope_chord[sess] * chord + slope_group * d_group
+    + slope_force[sess] * d_force on all sessions of one cell, then take the covariates out
+    of the observed distance.
 
-    ``g`` is (n_pairs, k): covariates with one slope shared by all sessions (the group
-    geometry, the same in every session). ``h`` is (n_pairs, m): covariates with one slope
-    per session (the subject's own force geometry, whose mapping onto the neural geometry
-    may change with learning). Plus a chord effect and an intercept per session:
-    X = [g | h x session | chord x session | session].
-
-    Returns (slopes, slopes_session, slope_chord, intercept): slopes as a length-k array,
-    slopes_session as {session: length-m array}, the last two as {session: beta}.
+    chord is coded +1 (trained) / -1 (untrained). Returns one long-format row per pair, with
+    the observed distance in ``value`` and the adjusted one in ``adjusted``.
     """
-    h = np.empty((len(y), 0)) if h is None else h
-    c = chord.map({'trained'  : 1, 'untrained': -1}).to_numpy()
-    D = np.stack([(session == s).to_numpy(dtype=float) for s in sessions], axis=1)
+    n = len(gl.sessions)
+    y = cell[d].to_numpy()
+    S = (cell.session.to_numpy()[:, None] == np.array(gl.sessions)).astype(float)  # session dummies, (n_pairs, n)
+    c = cell.chord.map({'trained': 1, 'untrained': -1}).to_numpy()[:, None]
+    i = S.argmax(axis=1)                                                            # each pair's session index
 
-    k, m, n = g.shape[1], h.shape[1], len(sessions)
+    X = [S, c * S]                     # intercept and chord effect, one per session
+    if group:
+        g = cell[f'{d}_group'].to_numpy()
+        X.append(g[:, None])           # group geometry, one slope for all sessions
+    if force:
+        f = cell[f'{d}_force'].to_numpy()
+        X.append(f[:, None] * S)       # force geometry, one slope per session
+    B = np.linalg.pinv(np.hstack(X)) @ y
 
-    # column j * n + s is covariate j in session s
-    Hs = (h[:, :, None] * D[:, None, :]).reshape(len(y), m * n)
-    X  = np.c_[g, Hs, c[:, None] * D, D]
-    B  = np.linalg.pinv(X) @ y
+    # covariates are centred on the cell's mean so the adjusted values stay on the scale of y
+    adjusted = y.copy()
+    if group:
+        slope_group = B[2 * n]
+        adjusted   -= slope_group * (g - g.mean())
+    if force:
+        slope_force = B[-n:][i]
+        adjusted   -= slope_force * (f - f.mean())
 
-    slopes_session = {s: B[k + np.arange(m) * n + i] for i, s in enumerate(sessions)}
-    o = k + m * n
-    return B[:k], slopes_session, dict(zip(sessions, B[o:o + n])), dict(zip(sessions, B[o + n:]))
+    fit = cell.filter(['sn', 'Hem', 'roi', 'force_metric', 'session', 'chord', 'pair']).copy()
+    fit['distance'] = d
+    fit['value']    = y
+    fit['adjusted'] = adjusted
+    if group:
+        fit['group']       = g
+        fit['slope_group'] = slope_group
+    if force:
+        fit['force']       = f
+        fit['slope_force'] = slope_force
+    fit['slope_chord'] = B[n:2 * n][i]
+    fit['intercept']   = B[:n][i]
 
-
-def _ancova_cell(cell, keys, metrics, scale, force_metric=(), group=True):
-    """Adjusted dissimilarities of one subject's cell (all sessions), one column set per metric.
-
-    The group geometry gets one slope for all sessions, each force metric one slope per session.
-    """
-    adjusted = cell[keys + ['session', 'chord', 'pair']].copy()
-
-    shared      = ['group'] if group else []
-    per_session = [f'force_{fm}' for fm in force_metric]
-
-    for metric in metrics:
-        y = cell[metric].to_numpy()
-        g = cell[[f'{metric}_{name}' for name in shared]].to_numpy()
-        h = cell[[f'{metric}_{name}' for name in per_session]].to_numpy()
-
-        if scale:
-            y, g, h = y / y.mean(), g / g.mean(axis=0), h / h.mean(axis=0)
-
-        slopes, slopes_session, slope_chord, intercept = _ancova_group(y, g, cell.chord, cell.session, h)
-        S = np.stack([slopes_session[s] for s in cell.session])  # each pair's own session slopes, (n_pairs, m)
-
-        # the pair's own dissimilarity with the covariates taken out, centred on the
-        # cell's mean covariates so the adjusted values stay on the scale of y
-        adjusted[metric]                  = y - (g - g.mean(axis=0)) @ slopes - ((h - h.mean(axis=0)) * S).sum(axis=1)
-        adjusted[f'{metric}_slope_chord'] = cell.session.map(slope_chord)
-        for name, slope in zip(shared, slopes):
-            adjusted[f'{metric}_slope_{name}'] = slope
-        for j, name in enumerate(per_session):
-            adjusted[f'{metric}_slope_{name}'] = S[:, j]
-        adjusted[f'{metric}_intercept']   = cell.session.map(intercept)
-
-    return adjusted
+    return fit
 
 
-def make_rois_ancova_group_dataframe(glm=3, atlas_name='ROI', rois=None, sns=gl.participants, metrics=('crossnobis', 'cosine'), scale=False):
+def make_rois_ancova_group_dataframe(glm      = 3,
+                                     atlas    = 'ROI',
+                                     rois     = None,
+                                     sns      = gl.participants,
+                                     distance = ('crossnobis', 'cosine')):
 
-    """Trained vs untrained, with the reference-session geometry regressed out.
+    """Trained vs untrained, with the ref-session group geometry regressed out.
 
+    Long format: one row per pair and distance, with the distance in the ``distance`` column.
     """
     if rois is None:
-        rois = gl.rois[atlas_name]
+        rois = gl.rois[atlas]
 
-    df = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t')
-    df = df[df.chord.isin(['trained', 'untrained']) & df.session.isin(gl.sessions)]
+    dist_neural = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas}.glm{glm}.tsv'), sep='\t')
+    dist_neural = dist_neural[dist_neural.chord.isin(['trained', 'untrained']) & dist_neural.session.isin(gl.sessions)]
 
     cells = []
-    for sn, H, roi in itertools.product(sns, gl.Hem, rois):
+    for sn, H, roi, d in itertools.product(sns, gl.Hem, rois, distance):
 
-        print(f'ancova, participant {sn}, {H}, {roi}...')
+        print(f'Ancova ({d}), participant {sn}, {H}, {roi}...')
 
-        cell = df[(df.sn==sn) & (df.Hem == H) & (df.roi == roi)]
-        cells.append(_ancova_cell(cell, ['sn', 'Hem', 'roi'], metrics, scale))
+        cell = dist_neural[(dist_neural.sn == sn) & (dist_neural.Hem == H) & (dist_neural.roi == roi)]
+        cells.append(_ancova_cell(cell, d))
 
     df_ancova = pd.concat(cells, ignore_index=True)
 
-    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_ancova.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_ancova_group.within_session.{atlas}.glm{glm}.tsv'), sep='\t', index=False)
+
+    return df_ancova
 
 
-def make_rois_ancova_group_force_dataframe(glm=3, atlas_name='ROI', rois=None, sns=gl.participants, metrics=('crossnobis', 'cosine'), force_metric=('der',), scale=False):
-    """As make_rois_ancova_group_dataframe, but also regresses out the subject's own force
-    geometry in the same session, one covariate per entry of ``force_metric``, with its own
-    slope in each session.
+def make_rois_ancova_force_dataframe(glm      = 3,
+                                     atlas    = 'ROI',
+                                     rois     = None,
+                                     sns      = gl.participants,
+                                     distance = ('crossnobis', 'cosine'),
+                                     force    = ('abs', 'der',),
+                                     group    = True):
 
-    The force dissimilarity of each chord pair (from make_force_distance_dataframe) is
-    matched to the neural one on sn/session/pair, and the same metric is used for both
-    (crossnobis on crossnobis, cosine on cosine).
+    """Trained vs untrained, with the subject's own force geometry in the same session
+    regressed out (one slope per session), and with ``group`` the ref-session group
+    geometry too (one slope for all sessions).
+
+    Each force metric is fit separately. The force distance of each chord pair (from
+    make_force_distance_dataframe) is matched to the neural one on sn/session/pair, and the
+    same distance is used for both (crossnobis on crossnobis, cosine on cosine).
+
+    Long format: one row per pair, force metric and distance, with the distance in the
+    ``distance`` column.
     """
     if rois is None:
-        rois = gl.rois[atlas_name]
+        rois = gl.rois[atlas]
 
-    df = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t')
-    df = df[df.chord.isin(['trained', 'untrained']) & df.session.isin(gl.sessions)]
+    dist_neural = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas}.glm{glm}.tsv'), sep='\t')
+    dist_neural = dist_neural[dist_neural.chord.isin(['trained', 'untrained']) & dist_neural.session.isin(gl.sessions)]
+    dist_force = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
+    dist_force = dist_force[dist_force.force_metric.isin(force)]
+    dist_force = dist_force.rename(columns={d: f'{d}_force' for d in distance})
 
-    force = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
-    for fm in force_metric:
-        f  = force[force.metric == fm][['sn', 'session', 'pair', *metrics]]
-        f  = f.rename(columns={m: f'{m}_force_{fm}' for m in metrics})
-        df = df.merge(f, on=['sn', 'session', 'pair'], how='left', validate='many_to_one')
+    dm = dist_neural.merge(dist_force[['sn', 'session', 'pair', 'force_metric', *[f'{d}_force' for d in distance]]],
+                           on=['sn', 'session', 'pair'], how='left')
+
+    model = 'ancova_group_force' if group else 'ancova_force'
 
     cells = []
-    for sn, H, roi in itertools.product(sns, gl.Hem, rois):
+    for sn, H, roi, fm, d in itertools.product(sns, gl.Hem, rois, force, distance):
 
-        print(f'ancova + force {force_metric}, participant {sn}, {H}, {roi}...')
+        print(f'{model.capitalize()} ({fm}, {d}), participant {sn}, {H}, {roi}...')
 
-        cell = df[(df.sn==sn) & (df.Hem == H) & (df.roi == roi)]
-        cells.append(_ancova_cell(cell, ['sn', 'Hem', 'roi'], metrics, scale, force_metric))
+        cell = dm[(dm.sn == sn) & (dm.Hem == H) & (dm.roi == roi) & (dm.force_metric == fm)]
+        cells.append(_ancova_cell(cell, d, force=True))
 
     df_ancova = pd.concat(cells, ignore_index=True)
 
-    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_ancova_force.{"-".join(force_metric)}.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_{model}.within_session.{atlas}.glm{glm}.tsv'), sep='\t', index=False)
+
+    return df_ancova
 
 
-def make_rois_ancova_force_dataframe(glm=3, atlas_name='ROI', rois=None, sns=gl.participants, metrics=('crossnobis', 'cosine'), force_metric=('der',), scale=False):
-    """Trained vs untrained, with only the subject's own force geometry in the same session
-    regressed out (no group geometry), one covariate per entry of ``force_metric``, with its
-    own slope in each session.
+def make_force_ancova_group_dataframe(sns      = gl.participants,
+                                      distance = ('crossnobis', 'cosine'),
+                                      force    = ('raw', 'abs', 'der')):
 
-    The force dissimilarity of each chord pair (from make_force_distance_dataframe) is
-    matched to the neural one on sn/session/pair, and the same metric is used for both
-    (crossnobis on crossnobis, cosine on cosine).
-    """
-    if rois is None:
-        rois = gl.rois[atlas_name]
-
-    df = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t')
-    df = df[df.chord.isin(['trained', 'untrained']) & df.session.isin(gl.sessions)]
-
-    force = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
-    for fm in force_metric:
-        f  = force[force.metric == fm][['sn', 'session', 'pair', *metrics]]
-        f  = f.rename(columns={m: f'{m}_force_{fm}' for m in metrics})
-        df = df.merge(f, on=['sn', 'session', 'pair'], how='left', validate='many_to_one')
-
-    cells = []
-    for sn, H, roi in itertools.product(sns, gl.Hem, rois):
-
-        print(f'ancova, force {force_metric} only, participant {sn}, {H}, {roi}...')
-
-        cell = df[(df.sn==sn) & (df.Hem == H) & (df.roi == roi)]
-        cells.append(_ancova_cell(cell, ['sn', 'Hem', 'roi'], metrics, scale, force_metric, group=False))
-
-    df_ancova = pd.concat(cells, ignore_index=True)
-
-    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_ancova_force_only.{"-".join(force_metric)}.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
-
-
-def make_force_ancova_group_dataframe(force_metrics=('raw', 'abs', 'der'), sns=gl.participants, metrics=('crossnobis', 'cosine'), scale=False):
-    """The neural ancova's counterpart over the force dissimilarities written by make_force_distance_dataframe.
+    """The neural ancova's counterpart over the force distances written by make_force_distance_dataframe.
 
     Same model, fit once per subject x force metric instead of subject x Hem x roi.
+    Long format: one row per pair, force metric and distance.
     """
-    df = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
-    df = df[df.chord.isin(['trained', 'untrained']) & df.session.isin(gl.sessions)]
+    dist_force = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t')
+    dist_force = dist_force[dist_force.chord.isin(['trained', 'untrained']) & dist_force.session.isin(gl.sessions)]
 
     cells = []
-    for sn, force_metric in itertools.product(sns, force_metrics):
+    for sn, fm, d in itertools.product(sns, force, distance):
 
-        print(f'ancova, participant {sn}, force {force_metric}...')
+        print(f'Ancova ({fm}, {d}), participant {sn}...')
 
-        cell = df[(df.sn==sn) & (df.metric == force_metric)]
-        cells.append(_ancova_cell(cell, ['sn', 'metric'], metrics, scale))
+        cell = dist_force[(dist_force.sn == sn) & (dist_force.force_metric == fm)]
+        cells.append(_ancova_cell(cell, d, ['sn', 'force_metric']))
 
     df_ancova = pd.concat(cells, ignore_index=True)
 
-    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity_ancova.within_session.force.tsv'), sep='\t', index=False)
+    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity_ancova_group.within_session.force.tsv'), sep='\t', index=False)
+
+    return df_ancova
 
 
 def _force_prediction_cell(cell, d, ref_sess):
@@ -258,9 +237,9 @@ def make_rois_force_prediction_dataframe(glm      = 3,
 
 # Step name -> function.
 FUNC = {
-    'make_rois_ancova_dataframe'      : make_rois_ancova_group_dataframe,
-    'make_force_ancova_dataframe'     : make_force_ancova_group_dataframe,
-    'make_rois_ancova_group_force_dataframe': make_rois_ancova_group_force_dataframe,
+    'make_rois_ancova_group_dataframe'      : make_rois_ancova_group_dataframe,
+    'make_force_ancova_group_dataframe'     : make_force_ancova_group_dataframe,
+    'make_rois_ancova_group_force_dataframe': functools.partial(make_rois_ancova_force_dataframe, group=True),
     'make_rois_ancova_force_dataframe'      : make_rois_ancova_force_dataframe,
     'make_rois_force_prediction_dataframe'  : make_rois_force_prediction_dataframe,
 }
