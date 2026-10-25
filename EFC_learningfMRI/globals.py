@@ -24,7 +24,7 @@ atlasDir = 'atlases' #next((Dir for Dir in atlasDirs if Path(Dir).exists()), Non
 
 figDir='/Users/jdiedrichsen/Dropbox/Grants/CIHR_chords_2026/Figures'
 if not os.path.exists(figDir):
-    figDir = 'figures/'
+    figDir = 'paper/figures/'
 
 print(f'base directory found: {baseDir}')
 print(f"Atlas directory found: {atlasDir}")

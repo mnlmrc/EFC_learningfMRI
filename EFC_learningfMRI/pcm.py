@@ -40,16 +40,16 @@ PATTERN = {
      11911: np.array([ 1,  1,  0,  1,  1])
 }
 
-# FLEXION = {
-#     21911: 1,
-#     92122: 3,
-#     91211: 1,
-#     22911: 2,
-#     21291: 2,
-#     12129: 2,
-#     12291: 2,
-#     11911: 0
-# }
+FLEXION = {
+    21911: 1,
+    92122: 3,
+    91211: 1,
+    22911: 2,
+    21291: 2,
+    12129: 2,
+    12291: 2,
+    11911: 0
+}
 
 
 def fixed_models():
@@ -79,20 +79,20 @@ def subj_spec_models(order=None, glm=3):
 
     finger  = np.zeros((8, 5))
     pattern = np.zeros_like(finger)
-    #flexion = np.zeros(8)
+    flexion = np.zeros(8)
     for i, ch in enumerate(order):
-        #flexion[i] = FLEXION[ch]
+        flexion[i] = FLEXION[ch]
         finger[i]  = FINGER[ch]
         pattern[i] = PATTERN[ch]
 
     G_finger  = C @ (finger @ finger.T) @ C
     G_pattern = C @ (pattern @ pattern.T) @ C
-    #G_flexion = C @ np.outer(flexion, flexion)
+    G_flexion = C @ np.outer(flexion, flexion) @ C
 
-    return G_finger, G_pattern #, G_flexion
+    return G_finger, G_pattern, G_flexion
 
 
-def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session=3):
+def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session=3, crossval=True, sn=None):
     """Group-mean observed G of one ROI: the empirical baseline geometry.
 
     The crossvalidated Gs that :func:`scripts.pattern.calc_G_rois` writes per subject,
@@ -109,20 +109,27 @@ def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session
 
     As a component this asks how much of a session's geometry is already there in the
     average geometry of ``session``, so the structural components are fitted on what
-    that baseline leaves over. The subject being fitted is *in* the average (as it was
-    before Aug 31), so the baseline is not independent of it -- drop ``sn`` from ``sns``
-    for a leave-one-out version.
+    that baseline leaves over. With ``crossval`` (the default) the baseline is
+    leave-one-subject-out: ``sn``, the subject being fitted, is dropped from ``sns``, so
+    the baseline is independent of its data -- as ``G_matrix.add_group_reference`` does
+    for the distances. Without it the subject is *in* the average, which favours
+    ``session`` (its own data are in the baseline) over the other sessions.
 
     Reads 16 small .npy per call, ~46 ms, so ~30 s over a whole fit run: not worth
     caching, and a cache would have to hash ``order``.
     """
     order = gl.chordID if order is None else order
 
+    if crossval:
+        if sn is None:
+            raise ValueError('crossval=True needs sn, the subject to leave out')
+        sns = [s for s in sns if s != sn]
+
     Gs = []
-    for sn in sns:
+    for s in sns:
         fname = f'G_obs.within_session.{session}.glm{glm}.{Hem}.{roi}.npy'
-        G     = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
-        G     = G_sorted(G, sn, order=order)      # off this subject's own chord order, onto `order`
+        G     = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{s}', fname))
+        G     = G_sorted(G, s, order=order)      # off this subject's own chord order, onto `order`
         Gs.append(G)
 
     Gs = np.array(Gs)
@@ -130,16 +137,12 @@ def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session
     return np.mean(Gs, axis=0)
 
 
-@functools.lru_cache(maxsize=None)
-def _read_behav(fname):
-    return pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, fname), sep='\t')
-
-
 def behav_model(order, measure='MD', fname='efc1_chord.tsv'):
-    """Feature model of a behavioural measure from a normative dataset: the measure is
-    averaged per chord over everyone in ``fname``, so only the chord ``order`` is
-    subject specific. Chords that differ more in it get more distinct patterns."""
-    df = _read_behav(fname)
+    """
+    Make a model using a behavioural feature from the dataframe in fname
+    """
+
+    df = pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, fname), sep='\t')
 
     values    = pd.to_numeric(df[measure], errors='coerce')
     per_chord = values.groupby(df['chordID']).mean()     
@@ -148,7 +151,7 @@ def behav_model(order, measure='MD', fname='efc1_chord.tsv'):
     return C @ np.outer(v, v) @ C
 
 
-def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
+def make_G_dict(sn, glm=3, Hem=None, roi=None, order=None):
     """Second moment matrix of every model, keyed by name, for one subject.
 
     The one place the model set is defined: :func:`make_models` wraps these into the
@@ -177,28 +180,29 @@ def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
 
     G_tr_untr, G_tr, G_untr = fixed_models()
 
-    G_finger, G_pattern = subj_spec_models(order=order)
+    G_finger, G_pattern, G_flexion = subj_spec_models(order=order)
 
-    G = {'type'     : G_tr_untr,
-         'trained'  : G_tr,
-         'untrained': G_untr,
-         'finger'   : G_finger,
-         'pattern'  : G_pattern,
-         'MD'       : behav_model(order)}
+    G_DICT = {'type'     : G_tr_untr,
+              'trained'  : G_tr,
+              'untrained': G_untr,
+              'finger'   : G_finger,
+              'pattern'  : G_pattern,
+              'flexion'  : G_flexion,
+              'MD'       : behav_model(order)}
 
-    if force:
-        for metric in ('raw', 'abs', 'der'):
-            fname                = f'G_obs_raw.within_session.{session}.force.{metric}.npy'
-            G_force              = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
-            G[f'force_{metric}'] = C @ G_force @ C
+    # if force:
+    #     # for metric in ('raw', 'abs', 'der'):
+    #     fname                = f'G_obs_raw.within_session.{ref_session}.force.der.npy' # use only der, raw and abs are equivalent to pattern and finger
+    #     G_force              = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
+    #     G['force_der']       = C @ G_force @ C
 
-    if Hem is not None and roi is not None:
-        G['group_geometry'] = group_geometry_model(glm, Hem, roi, order)  # on the same chord order as every other model
+    # if Hem is not None and roi is not None:
+    #     G['group_geometry'] = group_geometry_model(glm, Hem, roi, order, crossval=False)  # on the same chord order as every other model, sn left out
 
-    return G
+    return G_DICT 
 
 
-def make_models(sn, glm=3, Hem=None, roi=None, force=False, comp_names=None, session=3):
+def make_models(sn, glm=3, Hem=None, roi=None, comp_names=None):
     """The model list and the component names for one subject.
 
     The matrices come from :func:`model_Gs`, on the subject's own trained-first chord
@@ -211,20 +215,20 @@ def make_models(sn, glm=3, Hem=None, roi=None, force=False, comp_names=None, ses
     force models are built from.
     """
 
-    G = model_Gs(sn, glm=glm, Hem=Hem, roi=roi, force=force, session=session)
+    G_DICT = make_G_dict(sn, glm=glm, Hem=Hem, roi=roi)
 
     if comp_names is None:
-        comp_names = list(G)
+        comp_names = list(G_DICT)
 
     M = [pcm.FixedModel('null', np.zeros((8, 8)))]
-    M += [pcm.FixedModel(name, G[name]) for name in comp_names if name != 'null']  # null is already first
+    M += [pcm.FixedModel(name, G_DICT[name]) for name in comp_names]  # null is already first
 
-    Gc = [G[name] / np.trace(G[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
+    Gc = [G_DICT[name] / np.trace(G_DICT[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
 
     M.append(pcm.ComponentModel('component', np.array(Gc)))
     M.append(pcm.FreeModel('ceil', 8))
 
-    return M, comp_names
+    return M
 
 
 def _dump(obj, fname, path):
@@ -283,13 +287,13 @@ def fit_component_model(loader, sessions=None, comp_names=None, base_names=()):
             obs_des = {'cond_vec': cond_vec, 'part_vec': part_vec}
             Y       = pcm.dataset.Dataset(betas, obs_descriptors=obs_des)
 
-            model, names = make_models(data.sn, glm=glm, Hem=data.Hem, roi=data.roi, comp_names=comp_names, force=True, session=session)
+            model = make_models(data.sn, glm=glm, Hem=data.Hem, roi=data.roi, comp_names=comp_names)
 
             # model family: base_names in every model, every combination of the rest on top
             Gc        = model[-2].Gc
-            fam_names = [n for n in names if n not in base_names]
-            base      = [names.index(n) for n in base_names]
-            MF = pcm.model.ModelFamily(Gc[[names.index(n) for n in fam_names]],
+            fam_names = [name for name in comp_names if name not in base_names]
+            base      = [comp_names.index(n) for n in base_names]
+            MF = pcm.model.ModelFamily(Gc[[comp_names.index(n) for n in fam_names]],
                                        basecomponents=Gc[base] if base else None,
                                        comp_names=fam_names)
             MF.models[0].name = '+'.join(base_names) or 'null'  # PcmPy calls it 'base'; with no base components it is the null model
@@ -299,11 +303,11 @@ def fit_component_model(loader, sessions=None, comp_names=None, base_names=()):
             _   , theta_in = pcm.fit_model_individ(Y, model[-2], fit_scale=False, verbose=True, fixed_effect='block')
 
             path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
-            stem = f'{atlas}.glm{glm}.{session}.{data.Hem}.{data.roi}.p'
+            stem = f'{atlas}.glm{glm}.{session}.{data.Hem}.{data.roi}.p'  # the component set in the name, so fits of different sets don't overwrite each other
             # the names go in with the theta: a component list that changed since the fit
             # (a component added, or fit_scale flipped) is then caught by the reader
             # instead of silently shifting every weight onto the wrong name
-            _dump({'theta': theta_in, 'comp_names': names}, f'component_model.theta_in.{stem}', path)
+            _dump({'theta': theta_in, 'comp_names': comp_names}, f'component_model.theta_in.{stem}', path)
             _dump(T_in,     f'component_model.T_in.{stem}',     path)
             # theta_mf[i] belongs to MF.models[i]; its components are fam_names in that model, then base_names
             _dump({'theta': theta_mf, 'model_names': [m.name for m in MF.models],

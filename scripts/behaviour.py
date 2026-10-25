@@ -203,11 +203,11 @@ if __name__ == '__main__':
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}
     main(args.what, **kwargs)
 
-    # if args.what is None:
-    #     # main('parse_sessions', **kwargs)
-    #     main('behaviour_trial',   **kwargs)
-    #     main('behaviour_session', **kwargs)
-    #     main('force_trial_wide',  **kwargs)
-    #     main('force_run_wide',    **kwargs)
-    #     main('force_trial_long',  **kwargs)
-    #     main('force_session',     **kwargs)
+    if args.what is None:
+        # main('parse_sessions', **kwargs)
+        main('behaviour_trial',   **kwargs)
+        main('behaviour_session', **kwargs)
+        main('force_trial_wide',  **kwargs)
+        main('force_run_wide',    **kwargs)
+        main('force_trial_long',  **kwargs)
+        main('force_session',     **kwargs)

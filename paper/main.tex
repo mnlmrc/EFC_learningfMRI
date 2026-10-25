@@ -15,8 +15,20 @@
 
 \subsection{Chord execution improved with practice}
 
+Sixteen participants practised multi-finger hand configurations combining flexion and extension around the metacarpophalangeal joint (chords) over 24 daily sessions. Four chords were practised in each session (trained chords). The remaining four chords (untrained chords) were performed only in sessions 1 and 2 (pretraining), sessions 3, 9 and 23 (MRI scanning) and sessions 4, 10 and 24 (behavioural testing). The assignment of chords to the trained and untrained set was counterbalanced across participants, so that each chord was trained by half of the participants. Each participant was assigned a unique set of trained and untrained chords (i.e., 16 different sets out of $\binom{8}{4}=70$ possible combinations).\\
 
+Performance improved with practice for both trained and untrained chords (Fig.~\ref{fig:behaviour}). From session 3 to session 23, success rate increased (trained: 76\% to 95\%, $t_{15}=5.91$, $p<.001$; untrained: 79\% to 95\%, $t_{15}=7.38$, $p<.001$; Fig.~\ref{fig:behaviour}a), execution time decreased (trained: 1.12 to 0.28~s, $t_{15}=13.43$, $p<.001$; untrained: 1.06 to 0.44~s, $t_{15}=11.90$, $p<.001$; Fig.~\ref{fig:behaviour}b), and the force trajectory became straighter, as indicated by a reduction in mean deviation (trained: 1.23 to 0.38~N, $t_{15}=13.25$, $p<.001$; untrained: 1.22 to 0.76~N, $t_{15}=5.30$, $p<.001$; Fig.~\ref{fig:behaviour}c). The improvement in untrained chords indicates a general, chord-unspecific component of learning, likely reflecting familiarity with the task and the device.\\
 
+On top of this general improvement, practice determined a chord-specific advantage for trained chords. In session 3, trained and untrained chords did not differ in success rate ($t_{15}=-1.34$, $p=.201$), execution time ($t_{15}=1.47$, $p=.162$) or mean deviation ($t_{15}=0.22$, $p=.833$). In sessions 9 and 23, trained chords were executed faster (session 9: $t_{15}=-2.99$, $p=.009$; session 23: $t_{15}=-4.18$, $p<.001$) and with smaller mean deviation (session 9: $t_{15}=-3.68$, $p=.002$; session 23: $t_{15}=-4.83$, $p<.001$) than untrained chords. Success rate, instead, was close to ceiling and comparable between chord sets in session 9 ($t_{15}=1.91$, $p=.075$) and session 23 ($t_{15}=0.14$, $p=.890$). Thus, in the scanning sessions, trained and untrained chords were performed with similar accuracy, while trained chords were executed more quickly and with more direct force trajectories.
+
+\begin{figure}
+    \centering
+    \includegraphics[scale=.5]{figures/success.pdf}
+    \includegraphics[scale=.5]{figures/execution_time.pdf}
+    \includegraphics[scale=.5]{figures/mean_deviation.pdf}
+    \caption{Behavioural performance across sessions for trained (red) and untrained (blue) chords. \textbf{a.} Success rate. \textbf{b.} Execution time. \textbf{c.} Mean deviation. Error bars indicate s.e.m. across participants.}
+    \label{fig:behaviour}
+\end{figure}
 
 
 \subsection{Learning-related changes in BOLD activity are not the result of changes in the force output}
@@ -55,6 +67,19 @@ Third, in each session and ROI, we regressed the difference in angular distance 
 \subsection{Task}
 
 \subsection{Experimental procedures}
+
+\subsection{Behavioural analysis}
+
+Finger forces were sampled at 500~Hz and low-pass filtered offline with a zero-phase FIR filter (cutoff 5~Hz). A trial was considered unsuccessful if any finger left the baseline force range ($\pm1.2$~N) during the 1-s planning phase, or if the participant did not reach the instructed chord within the 3.5-s execution window. The chord was considered reached when the absolute force of all instructed fingers exceeded 2~N and remained above this threshold for at least 600~ms. Success rate was computed as the proportion of successful trials for each participant, session and chord set.\\
+
+Execution time and mean deviation were computed on successful trials only. Execution time was defined as the interval between the first sample at which any finger left the baseline force range and the onset of the 600-ms hold period. Mean deviation quantified how much the force trajectory deviated from a straight path in the five-dimensional finger force space over the same time window:
+\begin{equation}
+    \mathrm{MD} = \frac{1}{N-2}\sum_{t=2}^{N-1}\left\lVert \mathbf{d}_t - \frac{\mathbf{d}_t^\top \mathbf{d}_N}{\mathbf{d}_N^\top \mathbf{d}_N}\,\mathbf{d}_N \right\rVert,
+    \qquad \mathbf{d}_t = \mathbf{F}_t - \mathbf{F}_1,
+\end{equation}
+where $\mathbf{F}_t \in \mathbb{R}^5$ is the force vector at sample $t$ and $N$ is the number of samples in the execution window. Mean deviation is therefore the average Euclidean distance between the force trajectory and the straight line joining the forces at the start and end of execution. Execution time and mean deviation were averaged across successful trials for each participant, session and chord set.\\
+
+Differences between trained and untrained chords were tested separately in each scanning session with two-sided paired $t$-tests across participants. Changes with practice were tested within each chord set by comparing sessions 3 and 23 with two-sided paired $t$-tests.
 
 \subsection{Evaluation of behavioural confounds on pattern separation}
 

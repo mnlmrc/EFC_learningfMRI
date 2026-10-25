@@ -669,7 +669,7 @@ def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Dif
     return out
 
 
-def component_bayesfactor(df, components, require_any=(), id_cols=('sn', 'session', 'Hem', 'roi')):
+def component_bayesfactor(df, components, require_all=(), id_cols=('sn', 'session', 'Hem', 'roi')):
     """AIC-corrected log Bayes factor of each component, from the model family likelihoods.
 
     ``df`` is the wide ``model_family.likelihood.*.tsv``: one row per participant and
@@ -679,9 +679,10 @@ def component_bayesfactor(df, components, require_any=(), id_cols=('sn', 'sessio
     factor is the log summed evidence of the models with it minus that of the models
     without it.
 
-    ``require_any`` restricts the family to the models holding at least one of those
+    ``require_all`` restricts the family to the models holding every one of those
     components (e.g. the three force models), so the evidence for ``components`` is
-    taken only among models that already explain the force patterns.
+    taken only among models that already explain the force patterns. It acts as an
+    extra base: a component listed in both has no models without it, so no Bayes factor.
 
     Returns a long table: ``id_cols``, ``component`` and ``log_bf``.
     """
@@ -689,8 +690,8 @@ def component_bayesfactor(df, components, require_any=(), id_cols=('sn', 'sessio
     base   = set(models[0].split('+'))                  # the first model: the base components alone, or 'null'
     comps  = {m: set(m.split('+')) - base for m in models}
 
-    if require_any:
-        models = [m for m in models if comps[m] & set(require_any)]
+    if require_all:
+        models = [m for m in models if set(require_all) <= comps[m]]
 
     crit = df[models].to_numpy() - np.array([len(comps[m]) for m in models])   # LL - k
 
