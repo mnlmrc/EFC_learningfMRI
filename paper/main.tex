@@ -1,6 +1,8 @@
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
 \usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{float} % [H] placement: put a float exactly where it is in the source
 
 \title{Title: TBD}
 \author{}
@@ -15,21 +17,38 @@
 
 \subsection{Chord execution improved with practice}
 
-Sixteen participants practised multi-finger hand configurations combining flexion and extension around the metacarpophalangeal joint (chords) over 24 daily sessions. Four chords were practised in each session (trained chords). The remaining four chords (untrained chords) were performed only in sessions 1 and 2 (pretraining), sessions 3, 9 and 23 (MRI scanning) and sessions 4, 10 and 24 (behavioural testing). The assignment of chords to the trained and untrained set was counterbalanced across participants, so that each chord was trained by half of the participants. Each participant was assigned a unique set of trained and untrained chords (i.e., 16 different sets out of $\binom{8}{4}=70$ possible combinations).\\
+Sixteen participants (XX females) practised multi-finger hand configurations combining flexion and extension around the metacarpophalangeal joint ("chords") over 24 daily sessions. Four chords were practised in each session (trained chords). The remaining 4 chords (untrained chords) were performed only in sessions 1 and 2 (pre-training sessions), sessions 3, 9 and 23 (MRI sessions) and sessions 4, 10 and 24 (behavioural testing sessions). The assignment of chords to the trained and untrained set was counterbalanced across participants, so that each chord was in the trained set for half of the participants. Each participant was assigned a unique set of trained and untrained chords (i.e., 16 different trained-untrained chord sets we used in the experiment out of $\binom{8}{4}=70$ possible combinations).\\
 
-Performance improved with practice for both trained and untrained chords (Fig.~\ref{fig:behaviour}). From session 3 to session 23, success rate increased (trained: 76\% to 95\%, $t_{15}=5.91$, $p<.001$; untrained: 79\% to 95\%, $t_{15}=7.38$, $p<.001$; Fig.~\ref{fig:behaviour}a), execution time decreased (trained: 1.12 to 0.28~s, $t_{15}=13.43$, $p<.001$; untrained: 1.06 to 0.44~s, $t_{15}=11.90$, $p<.001$; Fig.~\ref{fig:behaviour}b), and the force trajectory became straighter, as indicated by a reduction in mean deviation (trained: 1.23 to 0.38~N, $t_{15}=13.25$, $p<.001$; untrained: 1.22 to 0.76~N, $t_{15}=5.30$, $p<.001$; Fig.~\ref{fig:behaviour}c). The improvement in untrained chords indicates a general, chord-unspecific component of learning, likely reflecting familiarity with the task and the device.\\
+Initially, chord execution was challenging and participants failed to achieve the required configuration in most trials; by session 3 (i.e., the first MRI session), success rate raised >60\% (FIG) with most unsuccessful trials representing near-misses (FIG). At the end of the training period, both trained and untrained chords could be achieved with nearly 100\% success rate. This confirms our previous finding that all chords can be achieved without hard biomechanical limitations using finger forces from 2-5 N (REF). Gaining familiarity with the task through practice determined a general improvement in the ability to achieve chords, as shown by the similar success rate for trained and untrained chords in sessions 9-10 and 23-24.
 
-On top of this general improvement, practice determined a chord-specific advantage for trained chords. In session 3, trained and untrained chords did not differ in success rate ($t_{15}=-1.34$, $p=.201$), execution time ($t_{15}=1.47$, $p=.162$) or mean deviation ($t_{15}=0.22$, $p=.833$). In sessions 9 and 23, trained chords were executed faster (session 9: $t_{15}=-2.99$, $p=.009$; session 23: $t_{15}=-4.18$, $p<.001$) and with smaller mean deviation (session 9: $t_{15}=-3.68$, $p=.002$; session 23: $t_{15}=-4.83$, $p<.001$) than untrained chords. Success rate, instead, was close to ceiling and comparable between chord sets in session 9 ($t_{15}=1.91$, $p=.075$) and session 23 ($t_{15}=0.14$, $p=.890$). Thus, in the scanning sessions, trained and untrained chords were performed with similar accuracy, while trained chords were executed more quickly and with more direct force trajectories.
+Yet, chord execution was different between the trained and untrained set after practice. Trained chords were executed faster and with more synchronous finger presses, as showed by significantly lower execution time (ET) and mean deviation (MD) in sessions 9-10 and 23-24. This indicates that, while a general familiarity with the task is sufficient to achieve all chords, practice produces chord-specific performance gains. \\
 
-\begin{figure}
+\subsection{The execution of trained chords requires less activation in cortical motor regions}
+
+On sessions 3, 9 and 23, participants performed trained and untrained chords while being scanned with 7T fMRI. The inspection of BOLD activity time-aligned with chord execution and averaged across participants within each region-of-interest (ROI; FIG) showed that our task elicted a strong activation across cortical motor areas, and suggested smaller responses in trained vs. untrained chords in sessions 9 and 23. To characterise BOLD activation in more detail, we fitted a general linear model (GLM) with separate regressors for each chord and MRI session to the BOLD time series recorded in each voxel. In all ROIs, the mean BOLD activation decreased overall across sessions, with a more pronounced decrease for trained vs. untrained chords (FIG). Confirming this observation, a repeated-measures ANOVA showed a significant main effect of SESSION ($F_{2,30} \geq 4.67$, $p \leq .024$) and CHORD SET ($F_{1,15} \geq 12.91$, $p \leq .003$), and a significant SESSION $\times$ CHORD SET interaction ($F_{2,30} \geq 7.11$, $p \leq .011$) in all ROIs (Table~\ref{tab:activation_stats}). In sessions 9 and 23, activation was lower for trained than for untrained chords. This difference was significant in all ROIs except M1 in session 9 (paired $t$-tests, $t_{15} \leq -2.14$, $p \leq .0495$; M1: $t_{15} = -1.88$, $p = .080$), and in all ROI in session 23 ($t_{15} \leq -3.43$, $p \leq .004$), with the strongest effects in PMd, SPLa, and SPLp. In contrast, activation did not differ between trained and untrained chords in session 3 in any ROI ($|t_{15}| \leq 1.08$, $p \geq .30$).
+
+\begin{table}[H]
     \centering
-    \includegraphics[scale=.5]{figures/success.pdf}
-    \includegraphics[scale=.5]{figures/execution_time.pdf}
-    \includegraphics[scale=.5]{figures/mean_deviation.pdf}
-    \caption{Behavioural performance across sessions for trained (red) and untrained (blue) chords. \textbf{a.} Success rate. \textbf{b.} Execution time. \textbf{c.} Mean deviation. Error bars indicate s.e.m. across participants.}
-    \label{fig:behaviour}
-\end{figure}
-
+    \resizebox{\textwidth}{!}{% scale the table to the text width
+    \begin{tabular}{lccccccc}
+        \toprule
+         & SMA & PMd & PMv & M1 & S1 & SPLa & SPLp \\
+        \midrule
+        \multicolumn{8}{l}{\textit{Repeated-measures ANOVA}} \\
+        SESSION, $F_{2,30}$ & 8.51 (.002) & 9.48 (.002) & 13.82 ($<$.001) & 4.67 (.024) & 6.12 (.014) & 12.69 ($<$.001) & 11.74 (.001) \\
+        CHORD SET, $F_{1,15}$ & 13.45 (.002) & 26.08 ($<$.001) & 14.30 (.002) & 19.89 ($<$.001) & 12.91 (.003) & 22.11 ($<$.001) & 16.66 ($<$.001) \\
+        SESSION $\times$ CHORD SET, $F_{2,30}$ & 7.41 (.011) & 15.54 ($<$.001) & 8.89 (.005) & 7.11 (.005) & 12.90 ($<$.001) & 19.69 ($<$.001) & 19.57 ($<$.001) \\
+        \midrule
+        \multicolumn{8}{l}{\textit{Paired $t$-tests, trained vs. untrained}} \\
+        Session 3, $t_{15}$ & 1.08 (.299) & 0.31 (.763) & $-$0.58 (.573) & $-$0.69 (.499) & $-$0.42 (.681) & 0.23 (.821) & 0.65 (.528) \\
+        Session 9, $t_{15}$ & $-$2.33 (.034) & $-$4.17 ($<$.001) & $-$2.90 (.011) & $-$1.88 (.080) & $-$2.14 (.0495) & $-$3.86 (.002) & $-$3.53 (.003) \\
+        Session 23, $t_{15}$ & $-$3.43 (.004) & $-$5.30 ($<$.001) & $-$3.65 (.002) & $-$4.39 ($<$.001) & $-$4.57 ($<$.001) & $-$5.10 ($<$.001) & $-$4.90 ($<$.001) \\
+        \bottomrule
+    \end{tabular}}
+    \caption{ROI-based statistics of the univariate activation in the left hemisphere. Values are $F$ or $t$ statistics with $p$-values in parentheses. ANOVA $p$-values are Greenhouse--Geisser corrected. Negative $t$ values indicate lower activation for trained than for untrained chords. $p$-values are not corrected for the number of ROIs.}
+    
+    \label{tab:activation_stats}
+\end{table}  
 
 \subsection{Learning-related changes in BOLD activity are not the result of changes in the force output}
 BOLD activity is influenced by the amount of force generated by the fingers (REF) and, more importantly, by the rate of force variation over time (REF). Therefore, learning-related changes in BOLD activity could reflect a genuine modification of chord encoding across cortical motor regions or be the product of how these two aspects of chord execution are altered after extensive practice. The average absolute force across fingers increased slightly (within the instructed 2-5 N force range) with practice, and roughly equally for trained and untrained chords (Fig.~\ref{fig:force_measures}a). On the other hand, the absolute force derivative showed an overall decrease with practice, which was more pronounced for trained vs. untrained chords in sessions 9 and 23 (Fig.~\ref{fig:force_measures}b), compatible with a more stable force output and fewer corrective force adjustments needed to maintain the force pattern required by the instructed chord.\\
@@ -68,19 +87,6 @@ Third, in each session and ROI, we regressed the difference in angular distance 
 
 \subsection{Experimental procedures}
 
-\subsection{Behavioural analysis}
-
-Finger forces were sampled at 500~Hz and low-pass filtered offline with a zero-phase FIR filter (cutoff 5~Hz). A trial was considered unsuccessful if any finger left the baseline force range ($\pm1.2$~N) during the 1-s planning phase, or if the participant did not reach the instructed chord within the 3.5-s execution window. The chord was considered reached when the absolute force of all instructed fingers exceeded 2~N and remained above this threshold for at least 600~ms. Success rate was computed as the proportion of successful trials for each participant, session and chord set.\\
-
-Execution time and mean deviation were computed on successful trials only. Execution time was defined as the interval between the first sample at which any finger left the baseline force range and the onset of the 600-ms hold period. Mean deviation quantified how much the force trajectory deviated from a straight path in the five-dimensional finger force space over the same time window:
-\begin{equation}
-    \mathrm{MD} = \frac{1}{N-2}\sum_{t=2}^{N-1}\left\lVert \mathbf{d}_t - \frac{\mathbf{d}_t^\top \mathbf{d}_N}{\mathbf{d}_N^\top \mathbf{d}_N}\,\mathbf{d}_N \right\rVert,
-    \qquad \mathbf{d}_t = \mathbf{F}_t - \mathbf{F}_1,
-\end{equation}
-where $\mathbf{F}_t \in \mathbb{R}^5$ is the force vector at sample $t$ and $N$ is the number of samples in the execution window. Mean deviation is therefore the average Euclidean distance between the force trajectory and the straight line joining the forces at the start and end of execution. Execution time and mean deviation were averaged across successful trials for each participant, session and chord set.\\
-
-Differences between trained and untrained chords were tested separately in each scanning session with two-sided paired $t$-tests across participants. Changes with practice were tested within each chord set by comparing sessions 3 and 23 with two-sided paired $t$-tests.
-
 \subsection{Evaluation of behavioural confounds on pattern separation}
 
 We used three separate approaches to evaluate whether the increased separation between neural activity patterns for trained vs. untrained chords across cortical motor regions was simply the result of changes in motor performance after practice. \\
@@ -91,7 +97,7 @@ First, we modelled the cosine BOLD dissimilarities on session 3 for each partici
     \mathbf{y}_3 = \mathbf{X}_3 \boldsymbol{\beta} + \boldsymbol{\varepsilon}_3,
     \qquad
     \mathbf{X}_t = \begin{bmatrix} \mathbf{1} & \mathbf{f}_3 & \bar{\mathbf{y}}_3 \end{bmatrix} \in \mathbb{R}^{12 \times 3}
-    \label{eq:force_prediction}
+%\label{eq:force_prediction}
 \end{equation}
 
 where $\mathbf{y}_3 \in \mathbb{R}^{12}$ is the 12-dimensional vector of pairwise cosine dissimilarities between BOLD activity patterns for trained and untrained chords (6 trained and 6 untrained pairs) on session 3; $\mathbf{f}_3 \in \mathbb{R}^{12}$ is the corresponding vector of pairwise cosine dissimilarities between absolute force derivative patterns; and $\bar{\mathbf{y}}_3$ is the vector of group-average pairwise cosine dissimilarities between BOLD activity patterns in session 3. The group term captures the pair-specific geometry of each region that is unrelated to force, and is identical across sessions. The fitted coefficients were then used to predict the BOLD dissimilarities in each session, and the residuals were computed as:
@@ -128,9 +134,5 @@ Third, for each session and participant, we computed the difference between the 
     \Delta\phi^{\mathrm{BOLD}}_{n,t} = \beta_0 + \beta_1\,\Delta\phi^{\mathrm{force}}_{n,t} + \varepsilon_{n,t}
 \end{equation}
 The intercept $\beta_0$ estimates the difference in angular distance between BOLD activity patterns for trained and untrained chords for a participant with no difference in force derivative geometry, and was tested against zero with a one-sided $t$-test.
-
-
-
-
 
 \end{document}

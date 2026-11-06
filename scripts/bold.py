@@ -63,7 +63,7 @@ def segment_bold(sns=gl.participants, glm=3, atlas_name='ROI'):
             for sn in sns:
                 print(f'doing participant {sn}, {H}, {roi}, glm {glm}')
 
-                bold = np.load(os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'subj{sn}', f'BOLD.adj.{H}.{roi}.npy'))
+                bold = np.load(os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'subj{sn}', f'BOLD.raw.{H}.{roi}.npy'))
 
                 # retrieve onsets
                 onset, events = util.load_glm_onset(sn, glm, output_events=True)
@@ -78,13 +78,13 @@ def segment_bold(sns=gl.participants, glm=3, atlas_name='ROI'):
                 # tag each trial's timecourse with its chord and session
                 trials = pd.DataFrame(tc, columns=_tAx)
                 trials['chordID'] = np.asarray(events.chordID)
-                trials['sess'] = np.asarray(events.day)
+                trials['session'] = np.asarray(events.day)
                 trials['chord'] = 'untrained'
                 trained_ids = [int(c) for c in trained_untrained[:4]]
                 trials.loc[trials.chordID.isin(trained_ids), 'chord'] = 'trained'
 
                 # reshape to long/tidy form and add the descriptor columns
-                sub = trials.melt(id_vars=['chordID', 'sess', 'chord'], var_name='time', value_name='signal')
+                sub = trials.melt(id_vars=['chordID', 'session', 'chord'], var_name='time', value_name='signal')
                 sub['sn'] = sn
                 sub['roi'] = roi
                 sub['Hem'] = H
