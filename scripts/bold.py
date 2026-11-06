@@ -34,8 +34,8 @@ def save_bold_rois(sns=gl.participants, glm=3, atlas_name='ROI', rois=None):
         rois = gl.rois[atlas_name]
 
     for sn in sns:
-        path_glm  = os.path.join(gl.baseDir, f'glm{glm}', f'subj{sn}')
-        path_rois = os.path.join(gl.baseDir, 'ROI', f'subj{sn}')
+        path_glm  = os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'subj{sn}')
+        path_rois = os.path.join(gl.baseDir, gl.roiDir, f'subj{sn}')
         SPM       = spm.SpmGlm(path_glm)
 
         SPM.get_info_from_spm_mat()
@@ -63,7 +63,7 @@ def segment_bold(sns=gl.participants, glm=3, atlas_name='ROI'):
             for sn in sns:
                 print(f'doing participant {sn}, {H}, {roi}, glm {glm}')
 
-                bold = np.load(os.path.join(gl.baseDir, f'glm{glm}', f'subj{sn}', f'BOLD.adj.{H}.{roi}.npy'))
+                bold = np.load(os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'subj{sn}', f'BOLD.adj.{H}.{roi}.npy'))
 
                 # retrieve onsets
                 onset, events = util.load_glm_onset(sn, glm, output_events=True)
@@ -91,7 +91,7 @@ def segment_bold(sns=gl.participants, glm=3, atlas_name='ROI'):
 
                 df = pd.concat([df, sub], ignore_index=True)
 
-    df.to_csv(os.path.join(gl.baseDir, 'bold', 'bold_segmented.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', 'bold_segmented.tsv'), sep='\t', index=False)
     return df
 
 

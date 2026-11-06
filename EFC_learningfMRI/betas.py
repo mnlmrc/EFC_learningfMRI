@@ -71,14 +71,14 @@ def load_residuals(sn, glm, residual_fname='residual.dtseries.nii'):
     tens of GB. ``ResMS.nii`` is a plain volume and selects the much cheaper
     univariate prewhitening downstream.
     """
-    path_glm = os.path.join(gl.baseDir, f'glm{glm}', f'subj{sn}')
+    path_glm = os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'subj{sn}')
     return nb.load(os.path.join(path_glm, residual_fname))
     
 
 
 def load_betas(sn, glm, fname='beta.dscalar.nii'):
     """Betas of one subject, as a volume."""
-    path_glm   = os.path.join(gl.baseDir, f'glm{glm}', f'subj{sn}')
+    path_glm   = os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'subj{sn}')
     beta_cifti = nb.load(os.path.join(path_glm, fname))
     return nt.volume_from_cifti(beta_cifti, struct_names=['CortexLeft', 'CortexRight'])
 
@@ -115,7 +115,7 @@ def roi_avg(sns=None, glm=None, atlas_name='ROI', cond_names=['chordID', 'sessio
 
     df = pd.concat(frames, ignore_index=True)
     
-    df.to_csv(os.path.join(gl.baseDir, f'glm{glm}', f'{atlas_name}.activation.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, f'{gl.glmDir}{glm}', f'{atlas_name}.activation.tsv'), sep='\t', index=False)
 
 
 

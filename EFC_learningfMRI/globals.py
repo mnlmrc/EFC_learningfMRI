@@ -5,20 +5,25 @@ import time
 import sys
 import itertools
 
-baseDir = "/cifs/diedrichsen/data/Chord_exp/EFC_learningfMRI"
+baseDir = "/cifs/diedrichsen/data/Chord_exp"
 if not os.path.exists(baseDir):
-     baseDir = "/Volumes/diedrichsen_data$/data/Chord_exp/EFC_learningfMRI"
+     baseDir = "/Volumes/diedrichsen_data$/data/Chord_exp"
 
-natDir = 'natural'
-imagingDir = 'imaging_data'
-anatDir = 'anatomicals'
-chordDir = 'chords'
-behavDir = 'behavioural'
-glmDir = 'glm'
-roiDir = 'ROI'
-rdmDir = 'rdm'
-surfDir = 'surfaceWB'
-pcmDir = 'pcm'
+natDir = 'EFC_learningfMRI/natural'
+imagingDir = 'EFC_learningfMRI/imaging_data'
+anatDir = 'EFC_learningfMRI/anatomicals'
+chordDir = 'EFC_learningfMRI/chords'
+behavDir = 'EFC_learningfMRI/behavioural'
+glmDir = 'EFC_learningfMRI/glm'
+roiDir = 'EFC_learningfMRI/ROI'
+rdmDir = 'EFC_learningfMRI/rdm'
+surfDir = 'EFC_learningfMRI/surfaceWB'
+pcmDir = 'EFC_learningfMRI/pcm'
+arbuckleDir = 'EFC_learningfMRI/EF_Arbuckle_JNS2020'
+
+naturalDir = 'natural'
+
+emgDir = 'EFC_learningEMG'
 
 atlasDir = 'atlases' #next((Dir for Dir in atlasDirs if Path(Dir).exists()), None)
 

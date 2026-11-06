@@ -25,6 +25,17 @@
             ]
         },
         {
+            "name": "component weights",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/component_model.py",
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/venv/bin/python",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true,
+            "args": ["--what", "weight"]
+        },
+        {
             "name": "behaviour",
             "type": "debugpy",
             "request": "launch",

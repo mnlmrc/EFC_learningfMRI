@@ -10,6 +10,7 @@ import EFC_learningfMRI.globals as gl
 import EFC_learningfMRI.G_matrix as G_matrix
 import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
+import EFC_learningfMRI.models as models
 
 def make_rois_distance_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=True):
 
@@ -144,8 +145,8 @@ def make_noise_ceiling_dataframe(glm=3, atlas_name='ROI', sns=None, prefix='G_ob
     df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'noise_ceiling.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
-def _model_rdm_vectors(sn, glm=3, order=None, Hem=None, roi=None, force=False):
-    """Vectorised RDM of every model in ``pcm.model_Gs``, for one participant.
+def _model_rdm_vectors(sn, Hem, roi, order=None, glm=3):
+    """Vectorised RDM of every model in ``models.make_G_dict``, for one participant.
 
     Built on the same chord ``order`` and put through the same ``G_to_dist`` and lower
     triangle as :func:`_rdm_vectors`, so entry k of a model vector is the chord pair
@@ -156,41 +157,43 @@ def _model_rdm_vectors(sn, glm=3, order=None, Hem=None, roi=None, force=False):
     Returns a dict model name -> (n_pairs,) vector.
     """
     mask = np.tri(len(gl.chordID), k=-1, dtype=bool)
-    Gs   = pcm_.model_Gs(sn, glm=glm, Hem=Hem, roi=roi, order=order, force=force)
+    Gs   = models.make_G_dict(sn, order=order, Hem=Hem, roi=roi, glm=glm)
     return {name: pcm.G_to_dist(G)[mask] for name, G in Gs.items()}
 
 
 def make_model_correlation_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', rois=None, prefix='G_obs_raw',
-                                     method='pearson', order=None, include_base=False):
-    """RSA: each participant's crossnobis RDM against every model RDM of ``pcm.model_Gs``.
+                                     method='spearman', order=None, include_base=False):
+    """RSA: each participant's crossnobis RDM against every model RDM of ``models.make_G_dict``.
 
     """
-    if rois is none:
+    if rois is None:
         rois  = gl.rois[atlas_name]
     order = gl.chordID if order is None else order
 
-    # roi-independent, so built once per participant rather than once per cell
-    models = {sn: _model_rdm_vectors(sn, glm=glm, order=order) for sn in sns}
-
     rows = []
-    for H, roi, session in itertools.product(gl.Hem, rois, gl.sessions):
+    for H, roi in itertools.product(gl.Hem, rois):
 
-        print(f'doing {H}, {roi}, session {session}...')
+        # session-independent, but spencer depends on the roi
+        model_rdms = {sn: _model_rdm_vectors(sn, H, roi, order=order, glm=glm) for sn in sns}
 
-        # calculate noise ceiling (rdms in common order)
-        rdms         = _rdm_vectors(sns, H, roi, session, glm, prefix=prefix, order=order)
-        lower, upper = _noise_ceiling(rdms, method=method)
+        for session in gl.sessions:
 
-        for i, sn in enumerate(sns):
-            for name, model_rdm in model_rdms.items():
-                rows.append({'sn'     : sn,
-                             'Hem'    : H,
-                             'roi'    : roi,
-                             'session': session,
-                             'model'  : name,
-                             'r'      : _corr(rdms[i], model_rdm, method),
-                             'lower'  : lower[i],
-                             'upper'  : upper[i]})
+            print(f'doing {H}, {roi}, session {session}...')
+
+            # calculate noise ceiling (rdms in common order)
+            rdms         = _rdm_vectors(sns, H, roi, session, glm, prefix=prefix, order=order)
+            lower, upper = _noise_ceiling(rdms, method=method)
+
+            for i, sn in enumerate(sns):
+                for name, model_rdm in model_rdms[sn].items():
+                    rows.append({'sn'     : sn,
+                                 'Hem'    : H,
+                                 'roi'    : roi,
+                                 'session': session,
+                                 'model'  : name,
+                                 'r'      : _corr(rdms[i], model_rdm, method),
+                                 'lower'  : lower[i],
+                                 'upper'  : upper[i]})
 
     df = pd.DataFrame(rows)
     df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_correlation.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
@@ -253,6 +256,4 @@ if __name__=='__main__':
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}
     main(args.what, **kwargs)
 
-    if args.what is None:
-        calc_G_rois(sns=[116])
 

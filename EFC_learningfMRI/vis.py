@@ -172,6 +172,21 @@ def plot_pcm_corr(fig, axs, df, corr, rois=None, x='SNR', y='r_indiv', hue='chor
             ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
 
 
+def add_noise_ceiling(axs, df, rois=None, lower='lower', upper='upper', roi_col='roi', sn_col='sn', color='grey', alpha=.3, **kwargs):
+    """Shade the noise ceiling, from the mean lower to the mean upper bound, one panel per roi.
+
+    The bounds are one value per participant, repeated on every model row, so they
+    are reduced to one per participant before averaging.
+    """
+    if rois is None:
+        rois = df[roi_col].unique()
+
+    for r, roi in enumerate(rois):
+        ax    = axs[r] if len(rois) > 1 else axs
+        bound = df[df[roi_col] == roi].groupby(sn_col)[[lower, upper]].first().mean()
+        ax.axhspan(bound[lower], bound[upper], color=color, alpha=alpha, lw=0, zorder=0, **kwargs)
+
+
 def plot_mat_sess(fig, axs, mats, sessions=gl.sessions, labels=None, n_trained=4, cmap='viridis',
                   vmin=None, vmax=None, cbar=True, cbar_label=None, **kwargs):
     """One square matrix per session, every panel on the same colour scale.

@@ -11,11 +11,15 @@ import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
 
 
-def fit_component_model_rois(sns            =gl.participants, 
+def fit_component_model_rois(sns            = gl.participants, 
                              glm            = 3,
                              atlas_name     = 'ROI',
                              residual_fname = 'residual.dtseries.nii',
-                             comp_names     = ['type', 'trained', 'untrained', 'MD', 'finger', 'pattern'],
+                             comp_names     = ['identity', 'type', 'trained', 'untrained',                       # keys of models.make_G_dict
+                                               'mean deviation', 'execution time',
+                                               'single finger', 'muscle pattern', 'hand use',
+                                               'signed force pattern', 'absolute force pattern', 'force derivative pattern',
+                                               'flexion-extension bias', 'mean force magnitude', 'mean force derivative'],
                              sessions       = (3, 9, 23)):
 
     """Fit the PCM component model per (subject, Hem, roi, session).
@@ -58,20 +62,15 @@ def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
 
         path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'component_model.theta_in.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
         with open(path, 'rb') as f:
-            fit = pickle.load(f)
+            theta = pickle.load(f)
 
-        if not isinstance(fit, dict):
-            raise ValueError(f'{path} was fitted before the component names were stored with the theta, '
-                             f'so which component each weight belongs to cannot be known -- rerun the '
-                             f'fit_component pass')
+        comp_names = theta['comp_names']
 
-        comp_names = fit['comp_names']
-
-        # fit['theta'] holds one theta per model and they have different lengths, so it cannot
+        # theta['theta'] holds one theta per model and they have different lengths, so it cannot
         # be arrayed as a whole -- take the component model's: one log weight per component,
         # followed by the log scale (only if the fit had fit_scale=True) and the log noise,
         # which is why the components are sliced by name count and not by dropping the tail
-        weight = np.exp(np.array(fit['theta'][0][:len(comp_names)]))
+        weight = np.exp(np.array(theta['theta'][0][:len(comp_names)]))
 
         # log Bayes factor of each component from the model family fit of the same cell
         comp = '_'.join(comp_names)
@@ -135,6 +134,9 @@ def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
 
     LL = []
     for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
+
+        print(f'model family: subj{sn}, session {session}, {H}, {roi}')
+
         stem = f'{atlas_name}.glm{glm}.{session}.{H}.{roi}.p'
         with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{stem}'), 'rb') as f:
             T = pickle.load(f)
@@ -179,7 +181,7 @@ if __name__=='__main__':
     parser.add_argument('--glm', type=int, default=None, help='GLM the betas come from (default: the step default, 3)')
     parser.add_argument('--sns', nargs='+', type=int, default=gl.participants, help='participant ids to include in the analysis')
     parser.add_argument('--sessions', nargs='+', type=int, default=(3, 9, 23), help='participant ids to include in the analysis')
-    parser.add_argument('--comp_names', nargs='+', type=str, default=['trained', 'untrained', 'MD', 'finger', 'pattern'], help='components to include')
+    parser.add_argument('--comp_names', nargs='+', default=['trained', 'untrained', 'single finger', 'muscle pattern', 'hand use', 'signed force pattern', 'force derivative pattern', 'flexion-extension bias', 'mean force magnitude'], type=str, help='components to include, keys of models.make_G_dict (quote names with spaces)')
     args = parser.parse_args()
 
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}

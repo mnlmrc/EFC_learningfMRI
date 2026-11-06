@@ -109,7 +109,7 @@ class RegInfo:
     @cached_property
     def reginfo(self):
         """The raw reginfo.tsv as a DataFrame."""
-        path = os.path.join(gl.baseDir, f'glm{self.glm}', f'subj{self.sn}', 'reginfo.tsv')
+        path = os.path.join(gl.baseDir, f'{gl.glmDir}{self.glm}', f'subj{self.sn}', 'reginfo.tsv')
         return pd.read_csv(path, sep='\t')
 
     @cached_property
@@ -170,17 +170,18 @@ def parse_regressor_name(name, sep=','):
     return pd.DataFrame(tuple(parts[col] for col in parts.columns)).T
 
 
-def get_trained_and_untrained(sn):
+def get_trained_and_untrained(sn, experiment='EFC_learningfMRI'):
     """
     Retrieve which chords where trained and untrained in participant sn.
     Args:
         sn: participant number
+        experiment: folder in gl.baseDir with the participants.tsv (e.g. gl.emgDir)
 
     Returns:
         list of chordIDs. First four are trained, last four untrained
     """
 
-    pinfo     = pd.read_csv(os.path.join(gl.baseDir, 'participants.tsv'), sep='\t')
+    pinfo     = pd.read_csv(os.path.join(gl.baseDir, experiment, 'participants.tsv'), sep='\t')
     trained   = pinfo[pinfo.sn == sn].reset_index()['trained'][0].split('.')
     untrained = pinfo[pinfo.sn == sn].reset_index()['untrained'][0].split('.')
     chords    = list()
@@ -207,6 +208,9 @@ def runs_to_keep(cond_vec, session='all', repetition='all', chord='all'):
     Returns:
         Boolean array of length ``len(cond_vec)``, True for rows passing every filter.
     """
+    if _is_all(session) and _is_all(repetition) and _is_all(chord) and np.ndim(cond_vec) == 1:
+        return np.ones(len(cond_vec), dtype=bool)   # nothing to filter, so any label format works
+
     cond = parse_cond_vec(cond_vec)
     keep = np.ones(len(cond), dtype=bool)
 
@@ -669,7 +673,7 @@ def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Dif
     return out
 
 
-def component_bayesfactor(df, components, require_all=(), id_cols=('sn', 'session', 'Hem', 'roi')):
+def component_bayesfactor(df, components, require=(), id_cols=('sn', 'session', 'Hem', 'roi')):
     """AIC-corrected log Bayes factor of each component, from the model family likelihoods.
 
     ``df`` is the wide ``model_family.likelihood.*.tsv``: one row per participant and
@@ -679,7 +683,7 @@ def component_bayesfactor(df, components, require_all=(), id_cols=('sn', 'sessio
     factor is the log summed evidence of the models with it minus that of the models
     without it.
 
-    ``require_all`` restricts the family to the models holding every one of those
+    ``require`` restricts the family to the models holding every one of those
     components (e.g. the three force models), so the evidence for ``components`` is
     taken only among models that already explain the force patterns. It acts as an
     extra base: a component listed in both has no models without it, so no Bayes factor.
@@ -690,8 +694,8 @@ def component_bayesfactor(df, components, require_all=(), id_cols=('sn', 'sessio
     base   = set(models[0].split('+'))                  # the first model: the base components alone, or 'null'
     comps  = {m: set(m.split('+')) - base for m in models}
 
-    if require_all:
-        models = [m for m in models if set(require_all) <= comps[m]]
+    if require:
+        models = [m for m in models if set(require) <= comps[m]]
 
     crit = df[models].to_numpy() - np.array([len(comps[m]) for m in models])   # LL - k
 
@@ -716,7 +720,7 @@ def load_glm_onset(sn, glm, output_events=False):
     two). The glm stacks the runs it kept back to back, so a trial's onset is set by the
     position of its run among the kept ones, not by its BN.
     """
-    pinfo  = pd.read_csv(os.path.join(gl.baseDir, 'participants.tsv'), sep='\t')
+    pinfo  = pd.read_csv(os.path.join(gl.baseDir, 'EFC_learningfMRI/participants.tsv'), sep='\t')
     prow   = pinfo.loc[pinfo.participant_id == f"subj{sn}"].iloc[0]
 
     events = pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, 'day3', f'efc4_subj{sn}_glm{glm}_events.tsv'), sep='\t')
