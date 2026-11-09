@@ -12,24 +12,6 @@ import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
 import EFC_learningfMRI.models as models
 
-def make_rois_distance_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=True):
-
-    sns  = gl.participants if sns is None else sns
-    rois = gl.rois[atlas_name]
-
-    rows = []
-    for H, roi, sess in itertools.product(gl.Hem, rois, gl.sessions):
-        for sn in sns:
-
-            print(f'doing participant {sn}, session {sess}, {H}, {roi}...')
-
-            G = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'G_obs_raw.within_session.{sess}.glm{glm}.{H}.{roi}.npy'))
-            rows += G_matrix.G_rows(G, sn, Hem=H, roi=roi, session=sess)
-
-    df = pd.DataFrame(rows)
-    df = G_matrix.add_group_reference(df, ['Hem', 'roi', 'pair'], ref_session, crossval)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
-
 
 def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['all']):
     """G_rois: build the betas loader, then the ROI Gs."""
@@ -45,7 +27,7 @@ def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['
                 G_raw    = G_matrix.calc_G(data.betas, data.cond_vec, data.part_vec, session, repetition=repetition, centred=False, fixed_effect=False)
                 G_noxval = G_matrix.calc_G(data.betas, data.cond_vec, data.part_vec, session, repetition=repetition, centred=False, fixed_effect=False, crossval=False)
 
-                save_path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
+                save_path = os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}')
                 os.makedirs(save_path, exist_ok=True)
 
                 fname = G_matrix.make_fname(session, repetition)
@@ -71,7 +53,7 @@ def _rdm_vectors(sns, H, roi, session, glm, prefix='G_obs_raw', order=None):
 
     rdms = []
     for sn in sns:
-        G   = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
+        G   = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
         G_s = G_matrix.G_sorted(G, sn, order=order)
         D   = pcm.G_to_dist(G_s)
         rdms.append(D[mask])
@@ -112,6 +94,25 @@ def _noise_ceiling(rdms, method='pearson'):
         upper.append(_corr(rdm, group_mean, method))
 
     return np.array(lower), np.array(upper)
+
+
+def make_dissimilarity_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=True):
+
+    sns  = gl.participants if sns is None else sns
+    rois = gl.rois[atlas_name]
+
+    rows = []
+    for H, roi, sess in itertools.product(gl.Hem, rois, gl.sessions):
+        for sn in sns:
+
+            print(f'doing participant {sn}, session {sess}, {H}, {roi}...')
+
+            G = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'G_obs_raw.within_session.{sess}.glm{glm}.{H}.{roi}.npy'))
+            rows += G_matrix.G_rows(G, sn, Hem=H, roi=roi, session=sess)
+
+    df = pd.DataFrame(rows)
+    df = G_matrix.add_group_reference(df, ['Hem', 'roi', 'pair'], ref_session, crossval)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
 def make_noise_ceiling_dataframe(glm=3, atlas_name='ROI', sns=None, prefix='G_obs_raw',
@@ -196,7 +197,7 @@ def make_model_correlation_dataframe(sns=gl.participants, glm=3, atlas_name='ROI
                                  'upper'  : upper[i]})
 
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_correlation.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'model_correlation.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
 def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, prefix='G_obs_raw'):
@@ -212,25 +213,25 @@ def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, pre
 
         print(f'doing participant {sn}, session {session}, {H}, {roi}...')
 
-        G_ref = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{ref_session}.glm{glm}.{H}.{roi}.npy'))
-        G_tar = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
+        G_ref = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{ref_session}.glm{glm}.{H}.{roi}.npy'))
+        G_tar = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
 
         for chord, b in blocks.items():
             G_scaled = G_matrix.G_scaling(G_ref[b, b], G_tar[b, b])
             rows.append(G_scaled.assign(chord=chord, session=session, Hem=H, roi=roi, sn=sn))
 
     df = pd.concat(rows, ignore_index=True)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'scaling.between_session.glm{glm}.{atlas_name}.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'scaling.between_session.glm{glm}.{atlas_name}.tsv'), sep='\t', index=False)
 
 
 # Step name -> function, grouped by what the step produces: the Gs, then the tsvs
 # collected from them. The component model fits live in component_model.py.
 FUNC = {
-    'G_rois'                        : calc_G_rois,
-    'make_rois_distance_dataframe'  : make_rois_distance_dataframe,
-    'dataframe_noise_ceiling'       : make_noise_ceiling_dataframe,
-    'dataframe_model_correlation'   : make_model_correlation_dataframe,
-    'dataframe_scaling'             : make_scaling_dataframe,
+    'calc_G_rois'                      : calc_G_rois,
+    'make_dissimilarity_dataframe' : make_dissimilarity_dataframe,
+    'dataframe_noise_ceiling'      : make_noise_ceiling_dataframe,
+    'model_correlation'            : make_model_correlation_dataframe,
+    'make_dataframe_scaling'           : make_scaling_dataframe,
 }
 
 

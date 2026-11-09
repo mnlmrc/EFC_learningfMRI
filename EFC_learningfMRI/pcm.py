@@ -2,11 +2,13 @@ import PcmPy as pcm
 import os
 import itertools
 import functools
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Sequence
 import numpy as np
 from EFC_learningfMRI.util import runs_to_keep
+import EFC_learningfMRI.util as util
 from EFC_learningfMRI.betas import BetasPrewithenedLoader
 import EFC_learningfMRI.globals as gl
 import EFC_learningfMRI.models as models
@@ -23,7 +25,7 @@ def _dump(obj, fname, path):
         pickle.dump(obj, f)
 
 
-def fit_component_model(loader, sessions=None, comp_names=None):
+def fit_model_indiv(loader, sessions=None, comp_names=None):
     """Fit the component model and the model family to every (subject, Hem, roi, session).
 
     Three individual fits per cell (:func:`PcmPy.fit_model_individ`):
@@ -66,8 +68,119 @@ def fit_component_model(loader, sessions=None, comp_names=None):
             
             _dump(T_in, f'component_model.T_in.{stem}', path)
             _dump({'theta': theta_in, 'comp_names': comp_names}, f'component_model.theta_in.{stem}', path)
-            _dump(T_mf, f'model_family.T.{stem}', path)
-            _dump({'theta': theta_mf, 'model_names': [m.name for m in MF.models], 'comp_names': comp_names}, f'model_family.theta.{stem}', path)
+            _dump(T_mf, f'model_family.T_in.{stem}', path)
+            _dump({'theta': theta_mf, 'model_names': [m.name for m in MF.models], 'comp_names': comp_names}, f'model_family.theta_in.{stem}', path)
+
+
+def _load_family_theta(sn, stem):
+    with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta_in.{stem}'), 'rb') as f:
+        return pickle.load(f)
+
+
+def _average_weights(thetas):
+    """Group-average component weights, as the mean of each subject's normalised weights.
+
+    ``thetas`` is (n_subj, n_comp) of log-weights. Each subject's weights are divided
+    by their sum before averaging: the components are trace-normalised, so this
+    averages the shape of each subject's predicted G and leaves its size -- the
+    subject's signal level -- to the scale fitted on the left-out subject. Averaging
+    in weight space, not log space, keeps the switched-off components (log-weights of
+    -30 to -1000) from swamping the mean. Subjects whose weights all underflow to
+    zero carry no shape and are skipped.
+    """
+    w = np.exp(np.asarray(thetas, dtype=float))
+    w = w[w.sum(axis=1) > 0]
+    if len(w) == 0:
+        raise ValueError('every training subject has all component weights at zero')
+    return (w / w.sum(axis=1, keepdims=True)).mean(axis=0)
+
+
+def _nearest_psd(G):
+    """``G`` with its negative eigenvalues set to zero, so a scaled G is a valid covariance."""
+    ev, U = np.linalg.eigh((G + G.T) / 2)
+    return (U * np.maximum(ev, 0)) @ U.T
+
+
+def fit_model_crossval(loader, sessions=None, group=None):
+    """Leave-one-subject-out likelihood of every model of the model family.
+
+    The cross-validated counterpart of the family fit of :func:`fit_model_indiv`, for
+    model comparison without an AIC/BIC penalty. ``PcmPy.fit_model_group_crossval``
+    cannot be used, because each subject's conditions are in its own (trained-first)
+    order, so its component matrices differ. Instead, for each subject, session, Hem
+    and ROI, every model of the family becomes a fixed model:
+
+        1. the weights that :func:`fit_model_indiv` saved for the model in every other
+           subject of ``group`` are averaged (:func:`_average_weights`)
+        2. the model's G is those weights times the subject's own components, on its
+           own chord order (:func:`models.make_G_dict`)
+        3. :func:`PcmPy.fit_model_individ` fits only a scale and the noise to the data
+
+    So a model's likelihood is how well the others' G, scaled, predicts the subject's
+    data; the weights are never fitted to the subject being scored. A model's
+    components are read off its name, in the order PcmPy stores its weights.
+
+    The last model, ``ceil``, is the cross-validated noise ceiling: the others' observed
+    Gs (:func:`models.group_geometry_model`, leave-one-out over ``group``), each put on
+    the subject's chord order and averaged, then projected to positive semi-definite,
+    since an average of crossvalidated Gs can have small negative eigenvalues. This is
+    the lower noise ceiling, not a bound: the others' average G carries their
+    measurement noise, so a smooth model of the right structure can predict the
+    subject better and exceed it. The upper ceiling is the individual free model
+    (``ceil`` in ``component_model.T_in``).
+
+    Run :func:`fit_model_indiv` for every subject in ``group`` first. The subjects can
+    then be run one at a time (``loader`` over one subject), since ``group``, not the
+    loader, sets the others.
+
+    Writes two pickles per cell to ``pcm/subj<sn>/``, with
+    ``<stem> = <atlas>.glm<glm>.<session>.<Hem>.<roi>.p``:
+        model_family.T_cv.<stem>       cross-validated likelihoods, the family's models
+                                       then ``ceil``
+        model_family.theta_cv.<stem>   {'theta', 'weights', 'model_names', 'group'}: per
+                                       model, theta is [log-scale, log-noise] and weights
+                                       the others' average weights of its components
+    """
+    sessions = gl.sessions if sessions is None else sessions
+    group    = gl.participants if group is None else list(group)
+
+    for data in loader:
+        path   = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
+        others = [sn for sn in group if sn != data.sn]
+        G_dict = models.make_G_dict(data.sn, glm=loader.glm, Hem=data.Hem, roi=data.roi)   # components on this subject's chord order
+        order  = np.asarray(util.get_trained_and_untrained(data.sn), dtype=int)
+
+        for session in sessions:
+            print(f'model family crossval: subj{data.sn}, session {session}, {data.Hem}, {data.roi}')
+
+            stem = f'{loader.atlas_name}.glm{loader.glm}.{session}.{data.Hem}.{data.roi}.p'
+            fits = [_load_family_theta(sn, stem) for sn in others]
+
+            model_names = fits[0]['model_names']
+            if any(fit['model_names'] != model_names for fit in fits):
+                raise ValueError(f'the other subjects\' model families ({stem}) hold different models')
+
+            # every model as a fixed G: the others' average weights on this subject's components
+            M, weights = [], []
+            for i, name in enumerate(model_names):
+                comps = [] if name == 'base' else name.split('+')
+                w     = _average_weights([fit['theta'][i][:len(comps), 0] for fit in fits]) if comps else np.zeros(0)
+                M.append(pcm.FixedModel(name, sum((wk * G_dict[c] for wk, c in zip(w, comps)), np.zeros((8, 8)))))
+                weights.append(w)
+
+            G_ceil = models.group_geometry_model(loader.glm, data.Hem, data.roi, order=order, sns=group, session=session, crossval=True, sn=data.sn)
+            M.append(pcm.FixedModel('ceil', _nearest_psd(G_ceil)))
+
+            keep = runs_to_keep(data.cond_vec, session=session)
+            Y    = pcm.dataset.Dataset(data.betas[keep], obs_descriptors={'cond_vec': data.cond_vec[keep],
+                                                                          'part_vec': data.part_vec[keep]})
+
+            with warnings.catch_warnings():   # PcmPy adds the scale column one model at a time: 512 PerformanceWarnings
+                warnings.simplefilter('ignore', pd.errors.PerformanceWarning)
+                T_cv, theta_cv = pcm.fit_model_individ(Y, M, fit_scale=True, fixed_effect='block', verbose=False)
+
+            _dump(T_cv, f'model_family.T_cv.{stem}', path)
+            _dump({'theta': theta_cv, 'weights': weights, 'model_names': [m.name for m in M], 'group': others}, f'model_family.theta_cv.{stem}', path)
 
 
 @dataclass

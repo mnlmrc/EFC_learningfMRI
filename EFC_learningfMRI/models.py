@@ -153,7 +153,7 @@ def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session
     Gs = []
     for s in sns:
         fname = f'G_obs.within_session.{session}.glm{glm}.{Hem}.{roi}.npy'
-        G     = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{s}', fname))
+        G     = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{s}', fname))
         G     = G_matrix.G_sorted(G, s, order=order)      # off this subject's own chord order, onto `order`
         Gs.append(G)
 
@@ -225,7 +225,7 @@ def force_model(sn, metric, order, ref_session=3, sns=gl.participants):
     """
     others = [s for s in sns if s != sn]
     fname  = f'G_obs_raw.within_session.{ref_session}.force.{metric}.npy'
-    Gs     = np.array([np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{s}', fname)) for s in others])
+    Gs     = np.array([np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{s}', fname)) for s in others])
     Gs     = G_matrix.G_sorted(Gs, others, order=order)    # off each participant's trained-first order, onto `order`
     return normalise(Gs.mean(axis=0))
 
@@ -306,7 +306,7 @@ def make_G_dict(sn, order=None, Hem='L', roi='M1', glm=3, ref_session=3, emg_ses
     G_type, G_trained, G_untrained = fixed_models(np.isin(order, chords[:4]))
 
     return {
-        'identity'                : np.eye(8),
+        'identity'                : normalise(np.eye(8)),
         'type'                    : G_type,
         'trained'                 : G_trained,
         'untrained'               : G_untrained,

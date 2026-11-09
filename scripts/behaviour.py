@@ -131,7 +131,7 @@ def calc_G_force(sns=gl.participants, metrics=('raw', 'abs', 'der'), sessions=('
                     G_raw    = G_matrix.calc_G(data, cond_vec, part_vec, centred=False, fixed_effect=False)
                     G_noxval = G_matrix.calc_G(data, cond_vec, part_vec, centred=False, fixed_effect=False, crossval=False)
 
-                    save_path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}')
+                    save_path = os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}')
                     os.makedirs(save_path, exist_ok=True)
 
                     fname = G_matrix.make_fname(session, repetition)
@@ -162,7 +162,7 @@ def make_force_distance_dataframe(force_metric=('raw', 'abs', 'der'), sns=gl.par
 
     df = pd.DataFrame(rows)
     df = G_matrix.add_group_reference(df, ['force_metric', 'pair'], ref_sess, crossval)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, 'dissimilarity.within_session.force.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, 'dissimilarity.within_session.force.tsv'), sep='\t', index=False)
 
 
 # Step name -> function, in the order the full run does them. The behaviour/force steps
@@ -176,7 +176,7 @@ FUNC = {
     'force_run_wide'   : force_by_run_wide,
     'force_trial_long' : force_by_trial_long,
     'force_session'    : force_by_session_avg,
-    'G_force'          : calc_G_force,
+    'calc_G_force'     : calc_G_force,
     'make_force_distance_dataframe': make_force_distance_dataframe,
 }
 

@@ -2,6 +2,7 @@ import argparse
 import os
 import pickle
 import itertools
+import functools
 import numpy as np
 import PcmPy as pcm
 import pandas as pd
@@ -11,16 +12,16 @@ import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
 
 
-def fit_component_model_rois(sns            = gl.participants, 
-                             glm            = 3,
-                             atlas_name     = 'ROI',
-                             residual_fname = 'residual.dtseries.nii',
-                             comp_names     = ['identity', 'type', 'trained', 'untrained',                       # keys of models.make_G_dict
-                                               'mean deviation', 'execution time',
-                                               'single finger', 'muscle pattern', 'hand use',
-                                               'signed force pattern', 'absolute force pattern', 'force derivative pattern',
-                                               'flexion-extension bias', 'mean force magnitude', 'mean force derivative'],
-                             sessions       = (3, 9, 23)):
+def fit_model_indiv(sns            = gl.participants, 
+                    glm            = 3,
+                    atlas_name     = 'ROI',
+                    residual_fname = 'residual.dtseries.nii',
+                    comp_names     = ['identity', 'type', 'trained', 'untrained',                       # keys of models.make_G_dict
+                                    'mean deviation', 'execution time',
+                                    'single finger', 'muscle pattern', 'hand use',
+                                    'signed force pattern', 'absolute force pattern', 'force derivative pattern',
+                                    'flexion-extension bias', 'mean force magnitude', 'mean force derivative'],
+                    sessions       = (3, 9, 23)):
 
     """Fit the PCM component model per (subject, Hem, roi, session).
 
@@ -31,7 +32,23 @@ def fit_component_model_rois(sns            = gl.participants,
     which component_summary reads back.
     """
     loader = betas.BetasPrewithenedLoader(sns=sns, glm=glm, atlas_name=atlas_name, residual_fname=residual_fname)
-    pcm_.fit_component_model(loader, comp_names=comp_names, sessions=sessions)
+    pcm_.fit_model_indiv(loader, comp_names=comp_names, sessions=sessions)
+
+
+
+def fit_model_crossval(sns            = gl.participants,
+                       glm            = 3,
+                       atlas_name     = 'ROI',
+                       residual_fname = 'residual.dtseries.nii',
+                       sessions       = (3, 9, 23)):
+    """Leave-one-subject-out likelihoods of the model family (:func:`pcm.fit_model_family_crossval`).
+
+    Needs the family fits of every participant (step ``fit``) on the drive. The weights
+    are always averaged over all of ``gl.participants`` but the subject scored, so
+    ``--sns`` can split the subjects across jobs.
+    """
+    loader = betas.BetasPrewithenedLoader(sns=sns, glm=glm, atlas_name=atlas_name, residual_fname=residual_fname)
+    pcm_.fit_model_crossval(loader, sessions=sessions)
 
 
 def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
@@ -66,35 +83,54 @@ def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
 
         comp_names = theta['comp_names']
 
-        # theta['theta'] holds one theta per model and they have different lengths, so it cannot
-        # be arrayed as a whole -- take the component model's: one log weight per component,
-        # followed by the log scale (only if the fit had fit_scale=True) and the log noise,
-        # which is why the components are sliced by name count and not by dropping the tail
         weight = np.exp(np.array(theta['theta'][0][:len(comp_names)]))
 
-        # log Bayes factor of each component from the model family fit of the same cell
-        comp = '_'.join(comp_names)
-        stem = f'{atlas_name}.glm{glm}.{session}.{H}.{roi}.p'
-        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta.{stem}'), 'rb') as f:
-            fam_names = list(pickle.load(f)['comp_names'])
-        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{stem}'), 'rb') as f:
-            T_mf = pickle.load(f)
-
-        # only the family's structure is needed, which zero matrices with the same names reproduce
-        MF = pcm.model.ModelFamily(np.zeros((len(fam_names), 8, 8)), comp_names=fam_names)
-        bf = MF.component_bayesfactor(T_mf.likelihood, method='AIC')[0]
-        bf = dict(zip(fam_names, bf))          # the family's base components are in every model: no Bayes factor
-
         df_tmp = pd.DataFrame({'weight'   : weight.squeeze(), 
-                               'component': comp_names,
-                               'log_bf'   : [bf.get(c, np.nan) for c in comp_names]})
+                               'component': comp_names,})
         df_tmp['sn']      = sn
         df_tmp['Hem']     = H
         df_tmp['roi']     = roi
         df_tmp['session'] = session
         df = pd.concat([df, df_tmp], ignore_index=True)
 
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'component_model.{atlas_name}.glm{glm}.{comp}.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'component_model.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+
+
+def make_model_family_weight_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', comp_names=None):
+    """Component weights of one model of the family, one row per (sn, session, Hem, roi, component).
+
+    ``comp_names`` names the components of the model to read, in any order; the default is
+    the family's full model (from the command line, the ``--comp_names`` default is the
+    fitted set, so the full model too). The model is looked up by its set of components, and its
+    weights are the exponentiated first ``len(comp_names)`` entries of its theta (the family
+    is fitted without a scale, so these come before the noise parameter), named in the
+    order the family stores them -- the order of the components in the model's name.
+    Written to ``model_family.weight.<atlas_name>.glm<glm>.<components>.tsv`` in the pcm dir,
+    with the components joined by '_' in the stored order.
+    """
+    rois = gl.rois[atlas_name]
+
+    df = []
+    for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
+        stem = f'{atlas_name}.glm{glm}.{session}.{H}.{roi}.p'
+        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta_in.{stem}'), 'rb') as f:
+            fit = pickle.load(f)
+
+        target = set(fit['comp_names'] if comp_names is None else comp_names)
+        idx    = [i for i, m in enumerate(fit['model_names']) if set(m.split('+')) == target]
+        if len(idx) != 1:
+            raise ValueError(f'subj{sn} {stem}: no model of the family is built from exactly {sorted(target)}')
+
+        comps = fit['model_names'][idx[0]].split('+')
+        df.append(pd.DataFrame({'component': comps,
+                                'weight'   : np.exp(fit['theta'][idx[0]][:len(comps), 0]),
+                                'sn'       : sn,
+                                'session'  : session,
+                                'Hem'      : H,
+                                'roi'      : roi}))
+
+    df = pd.concat(df, ignore_index=True)
+    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_family.weight.{atlas_name}.glm{glm}.{"+".join(comps)}.tsv'), sep='\t', index=False)
 
 
 def make_likelihood_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
@@ -123,14 +159,19 @@ def make_likelihood_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
     LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'likelihood.{atlas_name}.glm{glm}.{comp}.tsv'), sep='\t', index=False)
 
 
-def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
+def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', crossval=True):
     """Likelihood of every model of the model family, one row per (sn, session, Hem, roi).
 
     The columns are the family's model names, in the family's order, so the mean over
     participants of a cell can go straight into ``PcmPy.vis.plot_tree``. The tsv is
     named after the component set the family fit stored with its theta.
+
+    ``crossval=True`` collects the leave-one-subject-out likelihoods of step
+    ``fit_crossval`` instead, into ``model_family_cv.likelihood.<atlas>.glm<glm>.tsv``;
+    take their Bayes factors with ``util.component_bayesfactor(..., penalty=0)``.
     """
     rois = gl.rois[atlas_name]
+    cv   = 'cv' if crossval else 'in'
 
     LL = []
     for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
@@ -138,9 +179,9 @@ def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
         print(f'model family: subj{sn}, session {session}, {H}, {roi}')
 
         stem = f'{atlas_name}.glm{glm}.{session}.{H}.{roi}.p'
-        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{stem}'), 'rb') as f:
+        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T_{cv}.{stem}'), 'rb') as f:
             T = pickle.load(f)
-        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta.{stem}'), 'rb') as f:
+        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta_{cv}.{stem}'), 'rb') as f:
             fit = pickle.load(f)
 
         ll            = T.likelihood.copy()
@@ -151,15 +192,18 @@ def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
         LL.append(ll)
 
     LL = pd.concat(LL, ignore_index=True)
-    LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_family.likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+    LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_family_{cv}.likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
 # Step name -> function: the PCM fits, then the tsvs collected from them.
 FUNC = {
-    'fit'         : fit_component_model_rois,
-    'weight'      : make_component_weight_dataframe,
-    'likelihood'   : make_likelihood_dataframe,
-    'model_family': make_model_family_dataframe,
+    'fit_indiv'      : fit_model_indiv,
+    'fit_crossval'   : fit_model_crossval,
+    'weight'         : make_component_weight_dataframe,
+    'likelihood'     : make_likelihood_dataframe,
+    'model_family_in': functools.partial(make_model_family_dataframe, crossval=False),
+    'model_family_cv': functools.partial(make_model_family_dataframe, crossval=True),
+    'family_weight'  : make_model_family_weight_dataframe,
 }
 
 
@@ -181,7 +225,7 @@ if __name__=='__main__':
     parser.add_argument('--glm', type=int, default=None, help='GLM the betas come from (default: the step default, 3)')
     parser.add_argument('--sns', nargs='+', type=int, default=gl.participants, help='participant ids to include in the analysis')
     parser.add_argument('--sessions', nargs='+', type=int, default=(3, 9, 23), help='participant ids to include in the analysis')
-    parser.add_argument('--comp_names', nargs='+', default=['trained', 'untrained', 'single finger', 'muscle pattern', 'hand use', 'signed force pattern', 'force derivative pattern', 'flexion-extension bias', 'mean force magnitude'], type=str, help='components to include, keys of models.make_G_dict (quote names with spaces)')
+    parser.add_argument('--comp_names', nargs='+', default=['identity', 'trained', 'untrained', 'single finger', 'muscle pattern', 'hand use', 'signed force pattern', 'mean deviation', 'flexion-extension bias', 'mean force magnitude'], type=str, help='components to include, keys of models.make_G_dict (quote names with spaces)')
     args = parser.parse_args()
 
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}

@@ -19,6 +19,7 @@ roiDir = 'EFC_learningfMRI/ROI'
 rdmDir = 'EFC_learningfMRI/rdm'
 surfDir = 'EFC_learningfMRI/surfaceWB'
 pcmDir = 'EFC_learningfMRI/pcm'
+geomDir = 'EFC_learningfMRI/geometry'
 arbuckleDir = 'EFC_learningfMRI/EF_Arbuckle_JNS2020'
 
 naturalDir = 'natural'

@@ -526,6 +526,83 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
     """
     import pingouin as pg   # heavy import; only this helper needs it
 
+    rows = []
+    for key, a, b, sample_a, sample_b in _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):
+        res = pg.ttest(sample_a, sample_b, paired=paired and hue is not None, alternative=alternative).iloc[0]
+        rows.append({**key,
+                     'A'      : a,
+                     'B'      : b,
+                     'T'      : res['T'],
+                     'dof'    : res['dof'],
+                     'p_val'  : res['p_val'],
+                     'CI95'   : res['CI95'],       # of the A - B difference (of the mean, one-sample); pingouin rounds it to 2 decimals
+                     'cohen_d': res['cohen_d'],    # unsigned -- the sign of the effect is in T
+                     'BF10'   : res.get('BF10', np.nan),   # pingouin only reports it for the two-sided test
+                     'power'  : res.get('power', np.nan)})
+
+    return pd.DataFrame(rows)
+
+
+def sign_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, roi_col='roi', subject_col='sn', alternative='two-sided', popmean=0):
+    """Sign tests between ``hue`` levels, one per level of ``x`` (and per ROI).
+
+    The non-parametric twin of :func:`ttest_im_sess`: same table, same arguments,
+    same pairing of subjects, but each test counts how many subjects have
+    A > B and tests that count against a fair coin (exact binomial test), so
+    it assumes nothing about the distribution of the differences::
+
+        sign = signtest_im_sess(dist_chord_sess, rois, y='crossnobis', hue='chord',
+                                hue_order=['trained', 'untrained'])
+        print(sign[['roi', 'session', 'n_pos', 'n_neg', 'median_diff', 'p_val']])
+
+    Leave ``hue`` out to test the ``y`` values themselves against ``popmean``.
+    Subjects whose difference is exactly zero (ties) are dropped from the test, as
+    is standard, and counted in ``n_ties``. The test is always paired, so there is
+    no ``paired`` argument.
+
+    Parameters
+    ----------
+    df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean
+        As in :func:`ttest_im_sess`.
+    alternative : {'two-sided', 'less', 'greater'}, optional
+        ``'greater'`` tests A > B (more positive than negative differences);
+        passed to :func:`scipy.stats.binomtest`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ROI / ``x`` level / pair of ``hue`` levels, with columns
+        ``A``, ``B``, ``n_pos`` (subjects with A > B), ``n_neg``, ``n_ties``,
+        ``median_diff`` (median of A - B, ties included), ``p_val``, plus the ``x``
+        column and, unless ``roi_col`` is None, ``roi_col``.
+        The one-sample rows carry ``A = y`` and ``B = popmean``.
+    """
+    rows = []
+    for key, a, b, sample_a, sample_b in _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):
+        diff  = np.asarray(sample_a, dtype=float) - np.asarray(sample_b, dtype=float)
+        n_pos = int((diff > 0).sum())
+        n_neg = int((diff < 0).sum())
+        n     = n_pos + n_neg
+        rows.append({**key,
+                     'A'          : a,
+                     'B'          : b,
+                     'n_pos'      : n_pos,
+                     'n_neg'      : n_neg,
+                     'n_ties'     : len(diff) - n,
+                     'median_diff': np.median(diff) if len(diff) else np.nan,
+                     'p_val'      : scipy.stats.binomtest(n_pos, n, 0.5, alternative=alternative).pvalue if n else np.nan})
+
+    return pd.DataFrame(rows)
+
+
+def _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):
+    """Yield ``(key, A, B, sample_A, sample_B)`` for every test of the ``*_im_sess`` tests.
+
+    ``key`` holds the ROI (unless ``roi_col`` is None) and ``x`` level of the test.
+    With ``hue``, the samples are the ``y`` values of each pair of ``hue`` levels,
+    aligned on ``subject_col``, with the subjects missing either level dropped. Without
+    ``hue``, ``sample_A`` is ``y`` and ``sample_B`` is the scalar ``popmean``.
+    """
     if y is None:
         raise ValueError("y (the values to test) is required")
 
@@ -541,7 +618,6 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
 
     x_levels = np.sort(df[x].unique())
 
-    rows = []
     for roi in rois:
 
         df_roi = df if roi_col is None else df[df[roi_col]==roi]
@@ -549,38 +625,20 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
         for level in x_levels:
 
             df_level = df_roi[df_roi[x]==level]
+            key      = {x: level} if roi_col is None else {roi_col: roi, x: level}
 
-            # (A, B, sample_A, sample_B) per test; pingouin takes a scalar as the
-            # second argument, which is what makes the one-sample case the same call
             if one_sample:
                 vals = df_level.set_index(subject_col)[y]
                 if vals.index.has_duplicates:
                     raise ValueError(f'more than one row per {subject_col} in {x}={level}'
                                      + ('' if roi_col is None else f', {roi_col}={roi}'))
-                tests = [(y, popmean, vals.dropna(), popmean)]
+                yield key, y, popmean, vals.dropna(), popmean
             else:
                 piv        = df_level.pivot(index=subject_col, columns=hue, values=y)
                 hue_levels = [h for h in hue_order if h in piv.columns]
-                tests      = []
                 for a, b in itertools.combinations(hue_levels, 2):
                     pair = piv[[a, b]].dropna()
-                    tests.append((a, b, pair[a], pair[b]))
-
-            for a, b, sample_a, sample_b in tests:
-                res = pg.ttest(sample_a, sample_b, paired=paired and not one_sample, alternative=alternative).iloc[0]
-                row = {x        : level,
-                       'A'      : a,
-                       'B'      : b,
-                       'T'      : res['T'],
-                       'dof'    : res['dof'],
-                       'p_val'  : res['p_val'],
-                       'CI95'   : res['CI95'],       # of the A - B difference (of the mean, one-sample); pingouin rounds it to 2 decimals
-                       'cohen_d': res['cohen_d'],    # unsigned -- the sign of the effect is in T
-                       'BF10'   : res.get('BF10', np.nan),   # pingouin only reports it for the two-sided test
-                       'power'  : res.get('power', np.nan)}
-                rows.append(row if roi_col is None else {roi_col: roi, **row})
-
-    return pd.DataFrame(rows)
+                    yield key, a, b, pair[a], pair[b]
 
 
 def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Diff', roi_col='roi', subject_col='sn', coef='Intercept'):
@@ -673,34 +731,55 @@ def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Dif
     return out
 
 
-def component_bayesfactor(df, components, require=(), id_cols=('sn', 'session', 'Hem', 'roi')):
-    """AIC-corrected log Bayes factor of each component, from the model family likelihoods.
+def component_bayesfactor(df, family=None, require=(), penalty=1, id_cols=('sn', 'session', 'Hem', 'roi')):
+    """Penalised log Bayes factor of each component, from the model family likelihoods.
 
     ``df`` is the wide ``model_family.likelihood.*.tsv``: one row per participant and
-    cell, one column per model, the first model being the base alone. As
+    cell, one column per model (a ``ceil`` column, the noise ceiling, is ignored), the first model being the base alone. As
     ``PcmPy`` ``ModelFamily.component_bayesfactor(method='AIC')``: every model is
     penalised by its number of components (``LL - k``), and a component's log Bayes
     factor is the log summed evidence of the models with it minus that of the models
-    without it.
+    without it. A Bayes factor is returned for every component that varies across the
+    family, i.e. all of them but the base and ``require``.
 
-    ``require`` restricts the family to the models holding every one of those
-    components (e.g. the three force models), so the evidence for ``components`` is
-    taken only among models that already explain the force patterns. It acts as an
-    extra base: a component listed in both has no models without it, so no Bayes factor.
+    ``penalty`` is the log-likelihood cost of each component (``LL - penalty * k``): 1 is
+    AIC (the default), ``log(n) / 2`` BIC, and 0 for likelihoods that are already
+    cross-validated (``model_family_cv.likelihood.*.tsv``), which need no penalty.
+
+    ``family`` restricts the family to the models built only from those components
+    (the base model included), i.e. the sub-family of all their combinations. The
+    components left out are then absent from every model, rather than marginalised
+    over as they are by default (``None``: the whole family in ``df``)::
+
+        bf = component_bayesfactor(mf_likelihood, family=['single finger', 'hand use', 'muscle pattern'])
+
+    ``require`` keeps only the models holding every one of those components (e.g. the
+    three force models), so the evidence for the others is taken only among models that
+    already explain the force patterns. It acts as an extra base: those components are
+    in every model left, so they get no Bayes factor.
 
     Returns a long table: ``id_cols``, ``component`` and ``log_bf``.
     """
-    models = [c for c in df.columns if c not in id_cols]
+    models = [c for c in df.columns if c not in id_cols and c != 'ceil']   # the cv tsv also holds the noise ceiling
     base   = set(models[0].split('+'))                  # the first model: the base components alone, or 'null'
     comps  = {m: set(m.split('+')) - base for m in models}
 
-    if require:
-        models = [m for m in models if set(require) <= comps[m]]
+    all_comps = list(dict.fromkeys(c for m in models for c in comps[m]))   # in order of appearance
+    if family is None:
+        family = all_comps
+    if set(family) - set(all_comps):
+        raise ValueError(f'family components not in any model: {sorted(set(family) - set(all_comps))}')
+    if set(require) - set(family):
+        raise ValueError(f'require not in family: {sorted(set(require) - set(family))}')
 
-    crit = df[models].to_numpy() - np.array([len(comps[m]) for m in models])   # LL - k
+    # the sub-family built from `family` (the base model has no components, so it always
+    # stays), then only its models holding every `require` component
+    models = [m for m in models if comps[m] <= set(family) and set(require) <= comps[m]]
+
+    crit = df[models].to_numpy() - penalty * np.array([len(comps[m]) for m in models])   # LL - penalty * k
 
     out = []
-    for comp in components:
+    for comp in [c for c in family if c not in require]:
         has    = np.array([comp in comps[m] for m in models])
         bf     = df[list(id_cols)].copy()
         bf['component'] = comp
