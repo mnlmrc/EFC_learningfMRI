@@ -789,6 +789,52 @@ def component_bayesfactor(df, family=None, require=(), penalty=1, id_cols=('sn',
     return pd.concat(out, ignore_index=True)
 
 
+def sum_coded_effects(res, data, a, b):
+    """One effect per level of ``a``, per level of ``b`` and per (a, b) cell, from a model fitted as
+    ``y ~ C(a, Sum) * C(b, Sum)`` (e.g. ``statsmodels`` ``mixedlm``).
+
+    Sum coding estimates every level but the last of each factor, as a deviation from the grand
+    mean; the last one is minus the sum of the others. This puts the left-out levels back, with
+    their standard errors from the fit's covariance, so every level has its own row. The levels are
+    sorted as patsy sorts them. Returns ``term`` (intercept, ``a``, ``b`` or ``a x b``), ``level``,
+    ``coef``, ``se``, ``z`` and the two-sided ``p_val``.
+    """
+    la, lb = sorted(data[a].unique()), sorted(data[b].unique())
+    Ca = np.vstack([np.eye(len(la) - 1), -np.ones(len(la) - 1)])   # level x estimated level: the last level is -1 everywhere
+    Cb = np.vstack([np.eye(len(lb) - 1), -np.ones(len(lb) - 1)])
+
+    names = list(res.fe_params.index)
+    col_a = [names.index(f'C({a}, Sum)[S.{l}]') for l in la[:-1]]
+    col_b = [names.index(f'C({b}, Sum)[S.{l}]') for l in lb[:-1]]
+    col_ab = np.array([[names.index(f'C({a}, Sum)[S.{p}]:C({b}, Sum)[S.{q}]') for q in lb[:-1]] for p in la[:-1]])
+
+    L, rows = [], []
+    L.append(np.eye(len(names))[names.index('Intercept')])
+    rows.append(('intercept', ''))
+    for i, l in enumerate(la):
+        v = np.zeros(len(names)); v[col_a] = Ca[i]
+        L.append(v); rows.append((a, l))
+    for j, l in enumerate(lb):
+        v = np.zeros(len(names)); v[col_b] = Cb[j]
+        L.append(v); rows.append((b, l))
+    for i, p in enumerate(la):
+        for j, q in enumerate(lb):
+            v = np.zeros(len(names)); v[col_ab] = np.outer(Ca[i], Cb[j])
+            L.append(v); rows.append((f'{a} x {b}', f'{p} x {q}'))
+
+    L    = np.array(L)
+    cov  = res.cov_params().loc[names, names].to_numpy()
+    coef = L @ res.fe_params.to_numpy()
+    se   = np.sqrt(np.einsum('ij,jk,ik->i', L, cov, L))
+
+    out = pd.DataFrame(rows, columns=['term', 'level'])
+    out['coef']  = coef
+    out['se']    = se
+    out['z']     = coef / se
+    out['p_val'] = 2 * scipy.stats.norm.sf(np.abs(out.z))
+    return out
+
+
 def load_glm_onset(sn, glm, output_events=False):
     """Trial onsets of participant `sn`, in TRs of the glm's concatenated timeseries.
 

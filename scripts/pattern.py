@@ -227,11 +227,11 @@ def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, pre
 # Step name -> function, grouped by what the step produces: the Gs, then the tsvs
 # collected from them. The component model fits live in component_model.py.
 FUNC = {
-    'calc_G_rois'                      : calc_G_rois,
+    'calc_G_rois'                  : calc_G_rois,
     'make_dissimilarity_dataframe' : make_dissimilarity_dataframe,
     'dataframe_noise_ceiling'      : make_noise_ceiling_dataframe,
     'model_correlation'            : make_model_correlation_dataframe,
-    'make_dataframe_scaling'           : make_scaling_dataframe,
+    'make_dataframe_scaling'       : make_scaling_dataframe,
 }
 
 

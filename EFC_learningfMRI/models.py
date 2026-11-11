@@ -76,7 +76,7 @@ def normalise(G):
 
 
 
-def fixed_models(is_trained):
+def fixed(is_trained):
     """
     is_trained: (8,) bool, True in the slots of the subject's trained chords
     """
@@ -84,8 +84,8 @@ def fixed_models(is_trained):
     untr = 1 - tr
 
     # trained untrained
-    v_tr_untr = untr - tr
-    G_tr_untr = normalise(np.outer(v_tr_untr, v_tr_untr))
+    v_type = untr - tr
+    G_type = normalise(np.outer(v_type, v_type))
 
     # trained
     G_tr = normalise(np.diag(tr))
@@ -93,31 +93,31 @@ def fixed_models(is_trained):
     # untrained
     G_untr = normalise(np.diag(untr))
 
-    return G_tr_untr, G_tr, G_untr
+    return G_type, G_tr, G_untr
 
 
-def subj_spec_models(order=None, glm=3):
+# def subj_spec_models(order=None, glm=3):
 
-    """
-    order: list of chords in the order they appear in the G matrices
-    """
+#     """
+#     order: list of chords in the order they appear in the G matrices
+#     """
 
-    finger  = np.zeros((8, 5))
-    pattern = np.zeros_like(finger)
-    flexion = np.zeros(8)
-    for i, ch in enumerate(order):
-        flexion[i] = FLEXION[ch]
-        finger[i]  = FINGER[ch]
-        pattern[i] = PATTERN[ch]
+#     finger  = np.zeros((8, 5))
+#     pattern = np.zeros_like(finger)
+#     flexion = np.zeros(8)
+#     for i, ch in enumerate(order):
+#         flexion[i] = FLEXION[ch]
+#         finger[i]  = FINGER[ch]
+#         pattern[i] = PATTERN[ch]
 
-    G_finger  = normalise(finger @ finger.T, 'finger')
-    G_pattern = normalise(pattern @ pattern.T, 'pattern')
-    G_flexion = normalise(np.outer(flexion, flexion), 'flexion')
+#     G_finger  = normalise(finger @ finger.T, 'finger')
+#     G_pattern = normalise(pattern @ pattern.T, 'pattern')
+#     G_flexion = normalise(np.outer(flexion, flexion), 'flexion')
 
-    return G_finger, G_pattern, G_flexion
+#     return G_finger, G_pattern, G_flexion
 
 
-def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session=3, crossval=True, sn=None):
+def group_geometry(glm, Hem, roi, order=None, sns=gl.participants, session=3, crossval=True, sn=None):
     """Group-mean observed G of one ROI: the empirical baseline geometry.
 
     The crossvalidated Gs that :func:`scripts.pattern.calc_G_rois` writes per subject,
@@ -162,7 +162,7 @@ def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session
     return normalise(np.mean(Gs, axis=0))
 
 
-def spencer_model(Hem, roi, order=None, glm=3, sns=spencer.participants):
+def single_finger(Hem, roi, order=None, glm=3, sns=spencer.participants):
     """Group-mean G of the chord patterns predicted from Arbuckle's single-finger data, in one ROI.
 
     The crossvalidated Gs that scripts/model_from_spencer.calc_G_rois writes per Arbuckle participant,
@@ -174,18 +174,19 @@ def spencer_model(Hem, roi, order=None, glm=3, sns=spencer.participants):
     order = gl.chordID if order is None else order
 
     Gs = [np.load(os.path.join(gl.baseDir, gl.arbuckleDir, 'pcm', s, f'G_obs_raw.glm{glm}.{Hem}.{roi}.npy')) for s in sns]
+    Gs = np.array([pcm.G_to_cosine(G) for G in Gs])
     G  = normalise(np.mean(Gs, axis=0))
 
     perm = [list(gl.chordID).index(chord) for chord in order]       # source index for each target slot
     return G[np.ix_(perm, perm)]
 
 
-def natural_model(order=None):
+def hand_use(order=None):
     """G of the chords predicted from the natural statistics of hand use (glove data).
 
     The G that scripts/spencer.calc_G_natural writes in sorted chordID order (``gl.chordID``),
     normalised and put on ``order``, the chord order of the subject being fitted (default
-    ``gl.chordID``), as :func:`spencer_model`.
+    ``gl.chordID``), as :func:`single_finger`.
     """
     order = gl.chordID if order is None else order
 
@@ -196,13 +197,13 @@ def natural_model(order=None):
     return G[np.ix_(perm, perm)]
 
 
-def muscle_model(order=None, session=1, sns=emg.participants):
+def muscle(order=None, session=1, sns=emg.participants):
     """Group-mean G of the chords' muscle (EMG) patterns, trace-normalised.
 
     The Gs that scripts/emg.calc_G_emg writes per EFC_learningEMG participant (the ten EMG
     channels as voxels) on day ``session``, put on ``order`` (default ``gl.chordID``) and
     averaged over ``sns``, then centred and divided by the trace (so the centred G has trace 1),
-    as :func:`spencer_model`. Each participant's G is in its own trained-first order, read from
+    as :func:`single_finger`. Each participant's G is in its own trained-first order, read from
     EFC_learningEMG/participants.tsv, so ``G_sorted`` puts it on ``order`` before averaging.
     """
     order = gl.chordID if order is None else order
@@ -210,15 +211,17 @@ def muscle_model(order=None, session=1, sns=emg.participants):
     fname = f'G_obs_raw.within_session.{session}.emg.npy'
     Gs    = np.array([np.load(os.path.join(gl.baseDir, gl.emgDir, 'pcm', f'subj{s}', fname)) for s in sns])
     Gs    = G_matrix.G_sorted(Gs, sns, order=order, experiment=gl.emgDir) # off each participant's trained-first order, onto `order`
+    Gs    = np.array([pcm.G_to_cosine(G) for G in Gs])   # unit-length pattern per chord, per participant
+
     return normalise(Gs.mean(axis=0))
 
 
-def force_model(sn, metric, order, ref_session=3, sns=gl.participants):
+def force(sn, metric, order, ref_session=3, sns=gl.participants):
     """Group-mean G of the force patterns (fingers as voxels) in ``ref_session``, leaving out ``sn``.
 
     The Gs that scripts/behaviour.calc_G_force writes per participant, each in that
     participant's trained-first order, so ``G_sorted`` puts every one on ``order``
-    **before** they are averaged (see :func:`group_geometry_model`). The average is over
+    **before** they are averaged (see :func:`group_geometry`). The average is over
     ``sns`` without ``sn``, the subject being fitted, so the model doesn't contain that
     subject's own behaviour. A fixed ``ref_session`` keeps the model the same across the
     sessions it is compared with.
@@ -227,6 +230,8 @@ def force_model(sn, metric, order, ref_session=3, sns=gl.participants):
     fname  = f'G_obs_raw.within_session.{ref_session}.force.{metric}.npy'
     Gs     = np.array([np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{s}', fname)) for s in others])
     Gs     = G_matrix.G_sorted(Gs, others, order=order)    # off each participant's trained-first order, onto `order`
+    Gs     = np.array([pcm.G_to_cosine(G) for G in Gs])   # unit-length pattern per chord, per participant
+
     return normalise(Gs.mean(axis=0))
 
 
@@ -256,7 +261,7 @@ def performance_model(sn, order, measure='MD', fname='behaviour.trial.tsv'):
 
     ``measure`` is averaged per chord over the session-4 trials in ``fname`` of every
     participant except ``sn``, the subject being fitted, so the model doesn't contain
-    that subject's own behaviour (as :func:`force_model`).
+    that subject's own behaviour (as :func:`force`).
     """
 
     df = _read_behav(fname)
@@ -283,16 +288,16 @@ def make_G_dict(sn, order=None, Hem='L', roi='M1', glm=3, ref_session=3, emg_ses
 
     The models (keys of the returned dict):
         identity                         every chord equally distinct from every other (``np.eye(8)``)
-        type, trained, untrained         which chords this subject trained (:func:`fixed_models`)
+        type, trained, untrained         which chords this subject trained (:func:`fixed`)
         mean deviation, execution time   the other subjects' mean MD and ET per chord in session 4, before
                                          training (:func:`performance_model`)
         single finger                    Arbuckle's single-finger patterns in ``Hem`` ``roi``, summed per
-                                         chord (:func:`spencer_model`)
-        muscle pattern                   EMG patterns on day ``emg_session`` (:func:`muscle_model`)
-        hand use                         natural statistics of hand use, from glove data (:func:`natural_model`)
+                                         chord (:func:`single_finger`)
+        muscle pattern                   EMG patterns on day ``emg_session`` (:func:`muscle`)
+        hand use                         natural statistics of hand use, from glove data (:func:`hand_use`)
         signed force pattern,            the other subjects' mean signed, absolute and absolute-derivative
         absolute force pattern,          force patterns (fingers as voxels) in ``ref_session``
-        force derivative pattern         (:func:`force_model`)
+        force derivative pattern         (:func:`force`)
         flexion-extension bias           the other subjects' mean signed force per chord in session 4, < 0
                                          flexion bias, > 0 extension bias (:func:`performance_model`)
         mean force magnitude,            the other subjects' mean absolute force and absolute force
@@ -303,7 +308,7 @@ def make_G_dict(sn, order=None, Hem='L', roi='M1', glm=3, ref_session=3, emg_ses
     chords = np.array(util.get_trained_and_untrained(sn)).astype(int)
     order  = chords if order is None else np.asarray(order).astype(int)
 
-    G_type, G_trained, G_untrained = fixed_models(np.isin(order, chords[:4]))
+    G_type, G_trained, G_untrained = fixed(np.isin(order, chords[:4]))
 
     return {
         'identity'                : normalise(np.eye(8)),
@@ -312,12 +317,12 @@ def make_G_dict(sn, order=None, Hem='L', roi='M1', glm=3, ref_session=3, emg_ses
         'untrained'               : G_untrained,
         'mean deviation'          : performance_model(sn, order, measure='MD', fname='behaviour.trial.tsv'),
         'execution time'          : performance_model(sn, order, measure='ET', fname='behaviour.trial.tsv'),
-        'single finger'           : spencer_model(Hem, roi, order=order, glm=glm),
-        'muscle pattern'          : muscle_model(order=order, session=emg_session),
-        'hand use'                : natural_model(order=order),
-        'signed force pattern'    : force_model(sn, 'raw', order, ref_session=ref_session),
-        'absolute force pattern'  : force_model(sn, 'abs', order, ref_session=ref_session),
-        'force derivative pattern': force_model(sn, 'der', order, ref_session=ref_session),
+        'single finger'           : single_finger(Hem, roi, order=order, glm=glm),
+        'muscle pattern'          : muscle(order=order, session=emg_session),
+        'hand use'                : hand_use(order=order),
+        'signed force pattern'    : force(sn, 'raw', order, ref_session=ref_session),
+        'absolute force pattern'  : force(sn, 'abs', order, ref_session=ref_session),
+        'force derivative pattern': force(sn, 'der', order, ref_session=ref_session),
         'flexion-extension bias'  : performance_model(sn, order, measure='force_raw', fname='force.trial.long.tsv'),
         'mean force magnitude'    : performance_model(sn, order, measure='force_abs', fname='force.trial.long.tsv'),
         'mean force derivative'   : performance_model(sn, order, measure='force_der', fname='force.trial.long.tsv'),
@@ -329,7 +334,7 @@ def make_models(sn, glm=3, Hem=None, roi=None, comp_names=None):
 
     The matrices come from :func:`model_Gs`, on the subject's own trained-first chord
     order -- the order its data are in. Pass ``Hem`` and ``roi`` to add the ROI's
-    ``group_geometry`` component (see :func:`group_geometry_model`); without them the
+    ``group_geometry`` component (see :func:`group_geometry`); without them the
     component model holds the structural components only.
 
     ``comp_names`` picks the models to use, by name, in order; the default is every
