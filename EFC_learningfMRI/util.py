@@ -243,6 +243,14 @@ def runs_to_keep(cond_vec, session='all', repetition='all', chord='all'):
     return keep
 
 
+def split_half(cond_vec, part_vec, session, half):
+    """Boolean mask over regressor rows: one half (0 or 1) of a session's runs, split
+    alternately (1st, 3rd, ... run of the session in half 0; 2nd, 4th, ... in half 1)."""
+    keep = runs_to_keep(cond_vec, session=session)
+    runs = np.unique(part_vec[keep])
+    return keep & np.isin(part_vec, runs[half::2])
+
+
 def add_chord_column(df, chordID_col='chordID', sn_col='sn', out_col='chord'):
     """Add a ``chord`` column labelling each row 'trained' or 'untrained'.
 
@@ -593,6 +601,93 @@ def sign_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, r
                      'p_val'      : scipy.stats.binomtest(n_pos, n, 0.5, alternative=alternative).pvalue if n else np.nan})
 
     return pd.DataFrame(rows)
+
+
+def anova_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, roi_col='roi', subject_col='sn', fisher_z=False):
+    """Repeated-measures test of a change over ``x``, one per ``hue`` level (and per ROI).
+
+    Where :func:`ttest_im_sess` compares ``hue`` levels within each session, this
+    tests each ``hue`` level across the levels of ``x``: a one-way repeated-measures
+    ANOVA (with its Friedman twin), plus paired t-tests between every pair of ``x``
+    levels, signed later minus earlier. Same long-format table and arguments as the
+    ``plot_*_sess`` functions::
+
+        res = anova_im_sess(model_corr[model_corr.Hem == 'L'], rois, y='r', hue='model',
+                            hue_order=comp_names, fisher_z=True)
+
+    ``p_fdr`` is Benjamini-Hochberg over every row returned, so leave out of
+    ``hue_order`` any level that duplicates another (``untrained`` = -``trained``).
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Long-format table with one row per subject / ROI / ``x`` / ``hue`` cell.
+    rois : list, optional
+        ROIs to test, in order (default: all in ``roi_col``).
+    x : str, optional
+        Within-subject factor whose effect is tested (default ``'session'``).
+    y : str
+        Column holding the values to test.
+    hue : str, optional
+        Column whose levels are tested separately; ``None`` for one test per ROI.
+    hue_order : list, optional
+        Levels of ``hue`` to test, in order (default: order of appearance).
+    roi_col : str, optional
+        Column holding the ROI names; ``None`` for a table with no ROIs.
+    subject_col : str, optional
+        Column identifying the subject (default ``'sn'``).
+    fisher_z : bool, optional
+        Test ``arctanh(y)`` instead of ``y`` (for correlations). The ``mean_*``
+        columns stay on the original scale.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ``hue`` level / ROI, with ``n``, ``mean_<level>`` per ``x``
+        level, ``F``, ``dof1``, ``dof2``, ``p_val``, ``p_GG`` (Greenhouse-Geisser),
+        ``p_fdr`` (of ``p_val``), ``p_friedman``, and ``T_<b>-<a>``, ``p_<b>-<a>``
+        for every pair of ``x`` levels.
+    """
+    import pingouin as pg   # heavy import; only the test helpers need it
+    from statsmodels.stats.multitest import multipletests
+
+    if y is None:
+        raise ValueError("y (the values to test) is required")
+
+    hues = [None] if hue is None else (list(df[hue].unique()) if hue_order is None else hue_order)
+    if roi_col is None:
+        rois = [None]
+    elif rois is None:
+        rois = df[roi_col].unique()
+
+    x_levels = np.sort(df[x].unique())
+
+    rows = []
+    for h in hues:
+        for roi in rois:
+            d = df if h is None else df[df[hue]==h]
+            d = d if roi is None else d[d[roi_col]==roi]
+
+            piv = d.pivot(index=subject_col, columns=x, values=y)[x_levels].dropna()   # raises on duplicate cells
+            z   = np.arctanh(piv.clip(-.999999, .999999)) if fisher_z else piv
+            lng = z.reset_index().melt(id_vars=subject_col, var_name=x, value_name='val')
+
+            aov = pg.rm_anova(lng, dv='val', within=x, subject=subject_col, correction=True).iloc[0]
+            row = {} if h is None else {hue: h}
+            row.update({} if roi is None else {roi_col: roi})
+            row['n'] = len(piv)
+            row.update({f'mean_{lev}': piv[lev].mean() for lev in x_levels})
+            row.update({'F'         : aov['F'],
+                        'dof1'      : aov['ddof1'],
+                        'dof2'      : aov['ddof2'],
+                        'p_val'     : aov['p_unc'],
+                        'p_GG'      : aov.get('p_GG_corr', aov['p_unc']),
+                        'p_friedman': scipy.stats.friedmanchisquare(*[z[lev] for lev in x_levels]).pvalue})
+            rows.append(row)
+
+    res = pd.DataFrame(rows)
+    
+    return res
 
 
 def _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):

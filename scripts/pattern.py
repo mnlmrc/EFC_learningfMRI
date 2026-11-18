@@ -11,6 +11,7 @@ import EFC_learningfMRI.G_matrix as G_matrix
 import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
 import EFC_learningfMRI.models as models
+import EFC_learningfMRI.util as util
 
 
 def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['all']):
@@ -36,6 +37,30 @@ def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['
                 np.save(os.path.join(save_path, f'cov.{fname}.glm{glm}.{data.Hem}.{data.roi}'), cov)
                 np.save(os.path.join(save_path, f'G_obs_raw.{fname}.glm{glm}.{data.Hem}.{data.roi}'), G_raw)
                 np.save(os.path.join(save_path, f'G_obs_noxval.{fname}.glm{glm}.{data.Hem}.{data.roi}'), G_noxval)
+
+
+def calc_G_split(sns=gl.participants, glm=3, sessions=gl.sessions):
+    """G_split: the G_obs_raw of each half of each session's runs (:func:`util.split_half`).
+
+    Saved as ``G_obs_raw.within_session.<session>.half<half>.glm<glm>.<Hem>.<roi>.npy``
+    next to the full-session Gs. Each half is crossvalidated over its own runs, so two
+    halves share no data and their RDMs can be correlated without a shared-noise bias.
+    """
+    loader = betas.BetasPrewithenedLoader(sns=sns, glm=glm)
+    for data in loader:
+
+        save_path = os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}')
+        os.makedirs(save_path, exist_ok=True)
+
+        for session, half in itertools.product(sessions, (0, 1)):
+
+            print(f'split, doing participant {data.sn}, session {session}, half {half}...')
+
+            idx   = util.split_half(data.cond_vec, data.part_vec, session, half)
+            G_raw = G_matrix.calc_G(data.betas[idx], data.cond_vec[idx], data.part_vec[idx], session, centred=False, fixed_effect=False)
+
+            np.save(os.path.join(save_path, f'G_obs_raw.within_session.{session}.half{half}.glm{glm}.{data.Hem}.{data.roi}'), G_raw)
+
 
 
 def _rdm_vectors(sns, H, roi, session, glm, prefix='G_obs_raw', order=None):
@@ -224,14 +249,64 @@ def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, pre
     df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'scaling.between_session.glm{glm}.{atlas_name}.tsv'), sep='\t', index=False)
 
 
+def make_test_retest_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, prefix='G_obs_raw', method='spearman'):
+    """Within-participant test-retest of the RDM, with its split-half noise ceiling.
+
+    Everything is computed on half-session RDMs (:func:`calc_G_split`), so the
+    between-session correlation and its ceiling rest on the same amount of data:
+
+    r_between: a half of ``ref_session`` against a half of ``session``, averaged over
+               the four pairings.
+    r_ref:     the two halves of ``ref_session`` against each other (split-half reliability).
+    r_session: the two halves of ``session`` against each other.
+
+    If the geometry did not change, r_between is limited only by the noise in the two
+    halves, and its expected value is sqrt(r_ref * r_session) (the ceiling).
+
+    One row per participant, hemisphere, roi and session other than ``ref_session``.
+    Writes ``test_retest.<atlas_name>.glm<glm>.tsv`` to the geometry dir.
+    """
+    sns      = gl.participants if sns is None else sns
+    rois     = gl.rois[atlas_name]
+    mask     = np.tri(len(gl.chordID), k=-1, dtype=bool)
+    sessions = [s for s in gl.sessions if s != ref_session]   # against itself, two of the four pairings would be a half with itself
+
+    rows = []
+    for sn, H, roi in itertools.product(sns, gl.Hem, rois):
+
+        print(f'doing participant {sn}, {H}, {roi}...')
+
+        # same participant, same (trained-first) chord order in every session, so no reordering is needed
+        rdm = {}
+        for session, half in itertools.product(gl.sessions, (0, 1)):
+            G = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{session}.half{half}.glm{glm}.{H}.{roi}.npy'))
+            rdm[session, half] = pcm.G_to_dist(G)[mask]
+
+        r_ref = _corr(rdm[ref_session, 0], rdm[ref_session, 1], method)
+        for session in sessions:
+            r_between = np.mean([_corr(rdm[ref_session, a], rdm[session, b], method) for a, b in itertools.product((0, 1), (0, 1))])
+            rows.append({'sn'       : sn,
+                         'Hem'      : H,
+                         'roi'      : roi,
+                         'session'  : session,
+                         'r_between': r_between,
+                         'r_ref'    : r_ref,
+                         'r_session': _corr(rdm[session, 0], rdm[session, 1], method)})
+
+    df = pd.DataFrame(rows)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'test_retest.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+
+
 # Step name -> function, grouped by what the step produces: the Gs, then the tsvs
 # collected from them. The component model fits live in component_model.py.
 FUNC = {
     'calc_G_rois'                  : calc_G_rois,
+    'calc_G_split'                 : calc_G_split,
     'make_dissimilarity_dataframe' : make_dissimilarity_dataframe,
     'dataframe_noise_ceiling'      : make_noise_ceiling_dataframe,
     'model_correlation'            : make_model_correlation_dataframe,
     'make_dataframe_scaling'       : make_scaling_dataframe,
+    'test_retest'                  : make_test_retest_dataframe,
 }
 
 

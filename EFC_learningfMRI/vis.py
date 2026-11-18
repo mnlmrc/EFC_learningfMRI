@@ -226,6 +226,19 @@ def plot_mat_sess(fig, axs, mats, sessions=gl.sessions, labels=None, n_trained=4
         fig.colorbar(im, ax=list(axs[:len(sessions)]), label=cbar_label, shrink=.6)
 
 
+def jackknife_errorbar(x):
+    """Mean +- jackknife SE of leave-one-out estimates, as a seaborn ``errorbar`` (pass the function itself).
+
+    ``x`` holds one estimate per left-out subject (e.g. the weights of :func:`pcm.fit_model_group_crossval`).
+    The estimates share all subjects but two, so their plain SE is far too small; the jackknife SE scales
+    their spread up: ``sqrt((n - 1) / n * sum((x - mean) ** 2))``.
+    """
+    x  = np.asarray(x)
+    n  = len(x)
+    se = np.sqrt((n - 1) / n * np.sum((x - x.mean()) ** 2))
+    return x.mean() - se, x.mean() + se
+
+
 def plot_im_sess(fig, axs, df, rois=None, x='session', y=None, hue=None, hue_order=None, palette=None, color=None, add_zero=False, kind='point', roi_col=None, native_scale=True, legend=True, alpha=1, **kwargs):
     kws = {
         'point' : dict(dodge=.2, lw=2, ls='-', errorbar='se', estimator='mean'),
