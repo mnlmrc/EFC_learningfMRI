@@ -4,6 +4,8 @@
 \usepackage{amsmath}
 \usepackage{booktabs}
 \usepackage{float} % [H] placement: put a float exactly where it is in the source
+\usepackage{hyperref}
+\usepackage{amsfonts}
 
 \title{Title: TBD}
 \author{}
@@ -55,7 +57,7 @@ On sessions 3, 9 and 23, participants performed trained and untrained chords whi
 
 Univariate activation offers a partial view of the information encoded in BOLD activity and on the changes that occurred after practice. We used representational similarity analysis (RSA) to assess multi-voxel activity patterns and characterise how chord information is encoded across cortical motor regions. First, we evaluated if BOLD activity patterns differed significantly between chords. To this end, we calculated the cross-validated Mahalanobis (crossnobis) dissimilarities between the BOLD activity patterns elicited during the execution of each chord. In a region without chord representation, the average crossnobis dissimilarity should be zero. In contrast, all ROI showed above-chance encoding already in session 3 (TAB). \\
 
-Next, we sought to establish whether the information represented in each ROI remained stable across participants. To this end, we correlated the pairwise crossnobis dissimilarities of each participant with the average dissimilarities of the remaining participants (lower noise ceiling) and of the entire group (upper noise ceiling). The lower noise ceiling reflects the part of each participant's geometry that is shared with the rest of the group, whereas the upper noise ceiling reflects the maximum correlation attainable given the measurement noise in each participant's data. Already in session 3, the lower noise ceiling was significantly greater than zero in all ROIs (all t(15) $\geq 2.7$, p < .01). In most ROIs it was also close to the upper noise ceiling, reaching 75–95\% of its value. This suggests that the information that cortical motor regions encode about chords is consistent across participants, and that individual differences are small, in line with previous work showing that the representational geometry of finger movements is stable across individuals (Ejaz et al., 2015). \\
+Next, we sought to establish whether the information represented in each ROI remained stable across participants. To this end, we correlated the pairwise crossnobis dissimilarities of each participant with the average dissimilarities of the remaining participants (lower noise ceiling) and of the entire group (upper noise ceiling). The lower noise ceiling reflects the part of each participant's geometry that is shared with the rest of the group, whereas the upper noise ceiling reflects the maximum correlation attainable given the measurement noise in each participant's data. Already in session 3, the lower noise ceiling was significantly greater than zero in all ROIs (all t(15) $\geq 2.7$, p < .01). In most ROIs it was also close to the upper noise ceiling, reaching 75–95\% of its value. This suggests that the information that cortical motor regions encode about chords is consistent across participants, and that individual differences are small, in line with previous work showing that the representational geometry of finger movements is stable across different individuals (Ejaz et al., 2015). \\
 
 What chord information is captured by brain activity? To investigate this, we defined five candidate representation models that predicted the geometry of BOLD activity patterns for each chord in voxel space based on different chord properties. (i) The \textit{identity} model predicted that BOLD patterns for each chords were equally distance in voxel space. (ii) The \textit{single finger} model predicted that the distance between BOLD activity patterns for each chord reflected the distance between the patterns obtained by summing the activity patterns evoked by the flexion or extension of each individual finger involved in the chord, measured in the same ROI in a separate dataset (Arbuckle et al., 2020). (iii) The \textit{muscle pattern} model predicted that the distance between BOLD activity patterns reflected the distance between the corresponding muscle activity patterns recorded with EMG outside of the MRI scanner in a separate group of participants (see Methods). (iv) The \textit{hand use} model predicted that chords requiring finger movements that frequently co-occur in everyday hand use evoke similar BOLD activity patterns, based on kinematic recordings of everyday hand activities (Ingram et al., 2008). (v) \textit{mean deviation} model predicted that the distance between BOLD activity patterns reflected differences in chord difficulty, as indexed by the mean deviation of the finger forces from the ideal straight force trajectory. We then used Pattern Component Modeling (PCM) to evaluate the likelihood of the observed BOLD activity patterns in each ROI under the hypothesis that their representational geometry corresponds to a weighted combination of these models. \\
 
@@ -114,6 +116,117 @@ Third, in each session and ROI, we regressed the difference in angular distance 
 \subsection{Task}
 
 \subsection{Experimental procedures}
+
+\subsection{Preprocessing of fMRI data and general linear model}
+
+The preprocessing of functional MRI images was performed with SPM12 (\url{https://www.fil.ion.ucl.ac.uk/spm/}) and custom MATLAB code and involved the following steps: (1) correction of geometric distortions using field maps (REF); (2) rigid-body realignment of all images to the first image of the first functional run to correct for head motion; and (3) coregistration of the functional images to the anatomical scan. No spatial smoothing or normalisation to a standard template was applied at this stage. Next, the pre-processed images collected in each MRI session were analysed usign a general linear model (GLM) with separate regressors for each chord. This resulted in 13 regressors per run, plus an intercept. Each regressor consisted of a delta function time-aligned to the instruction to start executing the chord and convolved with a two-gamma haemodynamic response function (HRF). We used a gridsearch approach to adjust the time to peak (XXX) and the time to undershoot (XXX) of the HRF and obtain the best fit to the BOLD timeseries. Before GLM estimation, the BOLD time series were high-pass filtered with a standard cutoff frequency of 128s. The 1st-level GLM analysis resulted in activation images consisting of the fitted beta coefficients across voxels for each chord, in each run, session and participant.
+
+\subsection{Surface reconstruction and regions of interest definition}
+ 
+We reconstructed the white–grey matter and pial surfaces from each participant's anatomical image using FreeSurfer (REF). Each surface was then inflated to a sphere and nonlinearly aligned to the FreeSurfer average atlas, using sulcal depth and surface curvature to match the cortical folding patterns. Next, we resampled both hemispheres of each participant onto a symmetric fs32k template, which represents each hemisphere with 32k vertices. In this way, the vertices correspond across participants, which makes it possible to compare the same cortical regions between participants.
+
+We defined the ROIs using a probabilistic cytoarchitectonic atlas projected onto the group surface (REF). M1 included all nodes belonging to Brodmann area 4 (BA4) within 2cm of the hand knob (REF). S1 included the nodes belonging to BA1, 2 and 3 within 2cm of the hand knob. We divided BA6 into a medial part (supplementary motor area, SMA), a lateral dorsal part (dorsal premotor cortex, PMd) and a ventral part (ventral premotor cortex, PMv). Finally, we split the superior parietal lobule into an anterior and a posterior part (SPLa and SPLp) approximately at the midpoint of the intraparietal sulcus. To avoid contamination of activity between neighbouring ROIs across sulci, we excluded voxels with more than 10\% of their volume lying in a neighbouring ROI.
+
+\subsection{Univariate analyses}
+
+
+
+\subsection{Multivariate analyses}
+
+We used representational similarity analysis (RSA) to assess chord information in beta coefficients from the 1st-level GLM. Within each ROI (or searchlight; see XXX), we first performed a multivariate spatial pre-whitening using the residuals from the 1st-level GLM:
+\begin{equation}
+    \tilde{\boldsymbol{\beta}} = \boldsymbol{\beta}\,\boldsymbol{\Sigma}^{-\frac{1}{2}}
+\end{equation}
+where $\boldsymbol{\beta}$ is the $N$ (chords $\times$ runs) by $P$ (voxels) matrix of the estimated beta coefficients and $\boldsymbol{\Sigma}$ is the $P$-by-$P$ noise covariance between voxels estimated from the residuals of the 1st-level GLM. The noise covariance $\Sigma$ was regularised using the Ledoit-Wolf procedure to ensure invertibility. Because voxels often show different (and correlated) levels of noise, the weighting of activation patterns by the inverse noise covariance makes dissimilarity estimates more reliable. \\
+
+Next, we calculated the cross-validated squared Mahalanobis (crossnobis) dissimilarity $d$ between chords $i$ and $j$ as follows:
+\begin{equation}
+    d_{ij} = \frac{1}{MP} \sum_{m=1}^{M} \left(\mathbf{x}_i^{(m)} - \mathbf{x}_j^{(m)}\right) \left(\mathbf{x}_i^{(\sim m)} - \mathbf{x}_j^{(\sim m)}\right)^\top
+\end{equation}
+where $M$ is the number of runs, and $\mathbf{x}_i$ and $\mathbf{x}_j$ are the pre-whitened BOLD activity patterns for chords $i$ and $j$, either from run $m$ or averaged across all the other runs ($\sim m$) in the same session. Cross-validation makes the dissimilarity estimates unbiased by measurement noise (REF). Because measurement noise pulls activity patterns in random directions, without cross-validation the expected dissimilarity between two activity patterns would be always larger than 0, even when they are identical and only differ by their noise. With cross-validation, the expected dissimilarity between identical patterns is 0, which means that we could test the average dissimilarity against 0 using a one-sided t-test to determine whether BOLD activity patterns carried reliable information. Importantly, especially when two patterns are very similar, cross-validated dissimilarity estimates can be negative. \\
+
+The pairwise dissimilarities between chords describe the information about chords contained in BOLD activity patterns. If all participants encoded chords in the same way (as we hypothesised based on previous work assessing the stability of BOLD activity patterns for finger movements (REF)), the dissimilarities of each participant should be similar to the rest of the group, up to the limit set by measurement noise. To evaluate how consistent chord information is across participants, we arranged the chords in the same order for all participants and vectorised the 28 pairwise dissimilarities of each participant. We then calculated the Pearson correlation between the dissimilarities of each participant and the average dissimilarities of the remaining participants (lower noise ceiling), and of the entire group (upper noise ceiling). The lower noise ceilings were tested against zero with two-sided one-sample $t$-tests across participants, separately for each ROI and session. \\
+
+\subsection{Pattern component modelling}
+
+We used Pattern Component Modelling (PCM; REF) to test different hypotheses about the representational geometry of BOLD activity patterns. PCM is a probabilistic framework that evaluates the likelihood that the observed activity patterns are drawn from a multivariate Gaussian distribution with second moment matrix $\mathbf{G} \in \mathbb{R}^{K \times K}$, where $K = 8$ is the number of chords. Each entry $G_{ij}$ is the inner product between the true activity patterns for chords $i$ and $j$, averaged across voxels. The squared Euclidean distance between the observed activity patterns for chords $i$ and $j$ can be calculated from the observed $\mathbf{G}$ as:
+\begin{equation}
+    d_{ij} = G_{ii} + G_{jj} - 2G_{ij},
+\end{equation}
+where $G_{ii}$ and $G_{jj}$ are the squared norms of the activity patterns for chords $i$ and $j$, and $G_{ij}$ is their inner product. If $\mathbf{G}$ is estimated with cross-validation across runs from pre-whitened activity patterns, $d_{ij}$ corresponds to the crossnobis dissimilarity in (EQ).  \\
+
+Therefore, the representational geometry of the observed BOLD activity patterns can be modelled as a weighted combination of second moment matrices $\mathbf{G}_c$, each reflecting a candidate representational component, as follows:
+\begin{equation}
+    \mathbf{G}(\boldsymbol{\theta}) = \sum_{c} \exp(\theta_c)\, \mathbf{G}_c,
+\end{equation}
+where $\theta_c$ is the log-weight of component $c$, so that the weights $\exp(\theta_c)$ are always non-negative. For each participant, ROI and session, we fitted the component weights $\theta$ that maximised the likelihood that the observed activity patterns were drawn from a multivariate Gaussian distribution with second moment matrix $\mathbf{G}(\boldsymbol{\theta})$. \\
+
+\subsection{Representational models}
+
+We defined the following representational models:
+\begin{itemize}
+    \item \textit{identity}: This model corresponded to and identity matrix $\mathbf{I}_{K=8}$ and predicted equal dissimilarities between all chords.
+    \item \textit{single finger}: This model predicted that the BOLD activity pattern for each chord corresponds to the sum of the activity patterns elicited by the single finger presses that form the chord. To define the model, we used an independent dataset in which N=9 participants made isometric presses in flexion or extension direction with each finger of the right hand (Arbuckle et al., 2020). For each participant of that dataset, ROI and acquisition run, we summed the activity patterns evoked by the flexion or extension of each finger involved in a chord. This resulted in 8 activity patterns per run, one for each chord. We then calculated the cross-validated second moment matrix of these patterns, and converted it to a cosine similarity matrix (i.e., we normalised each activity pattern to unit length). Finally, the model's second moment matrix $\mathbf{G}_{\text{single finger}}$ was obtained by averaging the cosine similarity matrices across participants.
+    \item \textit{muscle pattern}: This model predicted that the BOLD activity pattern for each chord reflects the pattern of muscle activity required to produce the chord. To define the model, we used EMG data recorded from ten electrodes placed over the finger flexor and extensor muscles of the forearm in a separate group of N=5 participants, who performed the same chords outside the MRI scanner (see EMG recordings). For each participant and trial, we averaged the rectified EMG signal of each channel from movement onset until the chord was completed, and then averaged these patterns across the repetitions of each chord within each block. This resulted in 8 muscle activity patterns per block, one for each chord. We then calculated the cross-validated second moment matrix of these patterns, and converted it to a cosine similarity matrix (i.e., we normalised each muscle activity pattern to unit length). Finally, the model's second moment matrix $\mathbf{G}_{\text{muscle pattern}}$ was obtained by averaging the cosine similarity matrices across participants.
+    \item \textit{hand use}: This model predicted that chords composed of finger movements that frequently co-occur in everyday life evoke similar BOLD activity patterns. To define the model, we used kinematic recordings of everyday hand use obtained with a data glove in N=6 participants (Ingram et al., 2008). For each recording session, we split the angular velocity of the metacarpophalangeal joint of each finger into a flexion and an extension signal, resulting in 10 signals (5 fingers $\times$ 2 directions). After rectifying each signal and normalising it to unit length, we calculated the cosine similarity between all pairs of signals, which reflects how often two finger movements co-occur during everyday hand use. The resulting $10 \times 10$ matrices were averaged across sessions within each participant, and then across participants. Finally, the model's second moment matrix $\mathbf{G}_{\text{hand use}}$ was obtained by projecting this matrix onto the chords, as $\mathbf{G}_{\text{hand use}} = \mathbf{A}\,\mathbf{S}\,\mathbf{A}^\top$, where $\mathbf{S}$ is the group-average $10 \times 10$ similarity matrix and $\mathbf{A} \in \{0,1\}^{8 \times 10}$ indicates which finger movements (flexion or extension of each finger) are involved in each chord.
+    \item \textit{mean deviation}: $\mathbf{G}'_c = \mathbf{v}\mathbf{v}^\top$, where $\mathbf{v} \in \mathbb{R}^K$ contains the mean deviation of each chord in session 4 (i.e., before training, see XXX), averaged across all participants except the one being fitted.
+    \item \textit{trained} and \textit{untrained}: $\mathbf{G}'_c = \mathrm{diag}(\mathbf{t})$ and $\mathbf{G}'_c = \mathrm{diag}(\mathbf{1} - \mathbf{t})$, respectively, where $\mathbf{t} \in \{0, 1\}^K$ indicates the chords trained by each participant. These components add a pattern unique to each trained (or untrained) chord, so that the trained (or untrained) chords become more distinct from each other and from the chords of the other set. \\
+\end{itemize}
+
+Each component $\mathbf{G}_c$ was double-centred and normalised to unit trace to ensure that the component weights were on a comparable scale. 
+
+\subsection{Model evaluation}
+
+First, to test whether activity patterns differed between chords, we compared the likelihood of the data under the \textit{identity} model with that under a null model that predicted no differences between activity patterns ($\mathbf{G} = \mathbf{0}$). Second, to test whether activity patterns contained structured chord information beyond the fact that each chord evoked a distinct pattern, we compared the likelihood of each combination of the \textit{identity} model with one of the other candidate models with the likelihood of the \textit{identity} model alone. To account for the different number of parameters, the log-likelihood $\mathcal{L}_m$  of each model was penalised by its number of components $k_m$ using the Akaike Information Criterion (AIC): 
+$$\tilde{\mathcal{L}}_m = \mathcal{L}_m - k_m$$
+Differences in penalised log-likelihood were then tested against zero with one-sided $t$-tests across participants. \\
+
+The candidate models predict partly overlapping representational geometries. Thus, to evaluate the unique contribution of each model, we fitted a family of models each including a combination candidate models (\textit{single finger}, \textit{muscle pattern}, \textit{hand use} and \textit{mean deviation}), plus the \textit{identity} model, and computed the log Bayes factor of each candidate model $c$ as:
+\begin{equation}
+\log BF_c = \log \frac{\sum_{m:\, c \in m} \exp\left(\tilde{\mathcal{L}}_m\right)}{\sum_{m:\, c \notin m} \exp\left(\tilde{\mathcal{L}}_m\right)},
+\end{equation}
+where the numerator is the summed likelihood of all the models in the family that include component $c$, and the denominator that of all the models that do not. The log Bayes factor therefore expresses how much more likely the data are when component $c$ is part of the model. A positive value means that component $c$ explains part of the representational geometry that the other components do not account for. To evaluate changes in the representational geometry after practice, we also calculated the log Bayes factor of the \textit{trained} and \textit{untrained} components after adding them to the model family. The log Bayes factors were tested against zero with one-sided $t$-tests across participants, separately for each ROI and session.
+
+\subsection{Pattern separation}
+
+To evaluate how practice changed the separation between activity patterns within each chord set, we averaged the crossnobis dissimilarities (Eq.~\ref{eq:crossnobis}) across the 6 pairs of trained chords and across the 6 pairs of untrained chords, separately for each participant, ROI and session. The average dissimilarities were compared between trained and untrained chords with two-sided paired $t$-tests across participants. We performed the same analysis within each searchlight, after pre-whitening the betas with the noise covariance estimated from the residuals within the searchlight, and assigned the average dissimilarities to the centre vertex. \\
+
+Crossnobis dissimilarity depends on both the magnitude of the activity patterns and the angle between them. To test whether practice changed the dissimilarities more than expected from the change in pattern magnitude alone, we calculated the average magnitude of the activity patterns in each chord set $S$ (trained or untrained) and session $t$ from the cross-validated second moment matrix as:
+\begin{equation}
+    a_{S,t} = \frac{1}{4} \sum_{i \in S} \sqrt{G_{ii,t}},
+\end{equation}
+and the average distance between the activity patterns of the same set as:
+\begin{equation}
+    \delta_{S,t} = \frac{1}{6} \sum_{\substack{i, j \in S \\ i < j}} \sqrt{d_{ij,t}}.
+\end{equation}
+We used the square root of the crossnobis dissimilarity because, unlike the squared distance, it scales linearly with pattern magnitude. Pairs with negative crossnobis dissimilarities were excluded from the average. If the activity patterns were only (down)scaled with practice, the distance in session 9 and 23 should change relative to session 3 by the same factor as the pattern magnitude:
+\begin{equation}
+    \hat{\delta}_{S,t} = \frac{a_{S,t}}{a_{S,3}}\, \delta_{S,3},
+    \qquad t \in \{9, 23\}.
+\end{equation}
+A positive difference between the observed and predicted distance, $\delta_{S,t} - \hat{\delta}_{S,t}$, indicates that the angle between the activity patterns increased, i.e., that the patterns rotated away from each other in voxel space. The difference between observed and predicted distance was compared between trained and untrained chords with one-sided paired $t$-tests (trained $>$ untrained), and tested against zero in each chord set with one-sample $t$-tests across participants. \\
+
+To measure the angle between activity patterns directly, we calculated the cosine dissimilarity between the activity patterns for chords $i$ and $j$ from the cross-validated second moment matrix as:
+\begin{equation}
+    c_{ij} = 1 - \frac{G_{ij}}{\sqrt{G_{ii}\,G_{jj}}}.
+\end{equation}
+Because each participant practised a unique set of chords, the trained and untrained sets could differ in their dissimilarity already at baseline, independently of practice. To remove this offset, we modelled the cosine dissimilarities of each participant and ROI across sessions as follows:
+\begin{equation}
+    \begin{bmatrix} \mathbf{y}_3 \\ \mathbf{y}_9 \\ \mathbf{y}_{23} \end{bmatrix}
+    =
+    \begin{bmatrix}
+        \bar{\mathbf{y}}_3 & \mathbf{W}_3 & \mathbf{0} & \mathbf{0} \\
+        \bar{\mathbf{y}}_3 & \mathbf{0} & \mathbf{W}_9 & \mathbf{0} \\
+        \bar{\mathbf{y}}_3 & \mathbf{0} & \mathbf{0} & \mathbf{W}_{23}
+    \end{bmatrix}
+    \begin{bmatrix} \beta_G \\ \boldsymbol{\theta}_3 \\ \boldsymbol{\theta}_9 \\ \boldsymbol{\theta}_{23} \end{bmatrix}
+    + \boldsymbol{\varepsilon},
+\end{equation}
+where $\mathbf{y}_t \in \mathbb{R}^{12}$ is the vector of cosine dissimilarities for the 6 pairs of trained and the 6 pairs of untrained chords in session $t$, and $\bar{\mathbf{y}}_3$ is the vector of cosine dissimilarities for the same chord pairs in session 3, averaged across all the other participants, with a single slope $\beta_G$ shared across sessions. $\mathbf{W}_t = \begin{bmatrix} \mathbf{c} & \mathbf{1} \end{bmatrix}$ contains the session-specific regressors for chord set, $\mathbf{c} \in \{-1, +1\}^{12}$ ($+1$ trained, $-1$ untrained), and intercept. We then removed the contribution of the baseline group geometry from the cosine dissimilarities:
+\begin{equation}
+    \tilde{\mathbf{y}}_t = \mathbf{y}_t - \hat{\beta}_G\left(\bar{\mathbf{y}}_3 - \langle \bar{\mathbf{y}}_3 \rangle\right),
+\end{equation}
+where $\langle\cdot\rangle$ denotes the mean over all pairs, so that the adjusted values remain on the scale of the original dissimilarities. Finally, the adjusted cosine dissimilarities were converted into angular distances, $\tilde{\boldsymbol{\phi}}_t = \arccos(1 - \tilde{\mathbf{y}}_t)$, averaged across trained and untrained pairs in each session, and compared with one-sided paired $t$-tests across participants (trained $>$ untrained).
 
 \subsection{Evaluation of behavioural confounds on pattern separation}
 
