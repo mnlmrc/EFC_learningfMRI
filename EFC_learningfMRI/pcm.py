@@ -58,33 +58,53 @@ def fit_model_indiv(loader, sessions=None, comp_names=None):
 
 
 
-def fit_model_transfer(loader, ref_session=3, sessions=None):
-    """Fit each session's data with the subject's own G from ``ref_session``.
+def fit_model_transfer(loader, ref_session=3, sessions=None, ref='group'):
+    """Fit each session's data with a reference G from ``ref_session``.
 
-    G_ref is the subject's ``G_obs`` in ``ref_session`` (negative eigenvalues set to 0,
-    trace-normalised). Models:
+    G_ref (negative eigenvalues set to 0, trace-normalised) is, by ``ref``:
+        'obs'    the subject's own ``G_obs`` in ``ref_session``
+        'group'  the other subjects' mean ``G_obs`` in ``ref_session``, on this subject's
+                 chord order (:func:`models.group_geometry`, leave-one-subject-out)
+
+    Models:
 
         transfer            G_ref
         transfer_identity   G_ref + identity               (noise control)
+        identity_trained    identity + type + trained      (no G_ref)
+        identity_untrained  identity + type + untrained    (no G_ref)
         transfer_trained    G_ref + type + trained
         transfer_untrained  G_ref + type + untrained
 
     transfer_trained and transfer_untrained have the same number of parameters, so their
     difference tests whether the trained chords changed more than the untrained ones.
-    In ``ref_session`` the models are fitted to the data G_ref came from, so they are
-    inflated there. The noise ceilings are fitted separately (:func:`fit_model_ceil`).
+    transfer_trained vs identity_trained (same number of parameters) tests whether G_ref
+    carries information beyond the generic and training structure.
+    With ref='obs', in ``ref_session`` the models are fitted to the data G_ref came from,
+    so they are inflated there; with ref='group' G_ref is independent of the subject's
+    data, so ``ref_session`` is a control (transfer should reach the lower ceiling). The
+    noise ceilings are fitted separately (:func:`fit_model_ceil`).
 
     Writes to ``pcm/subj<sn>/``:
-        model_transfer.T.<atlas>.glm<glm>.ref<ref_session>_obs.<session>.<Hem>.<roi>.p
+        model_transfer.T.<atlas>.glm<glm>.ref<ref_session>_<ref>.<session>.<Hem>.<roi>.p
     """
+    if ref not in ('obs', 'group'):
+        raise ValueError(f"ref must be 'obs' or 'group', got {ref!r}")
     sessions = gl.sessions if sessions is None else sessions
-    stem     = f'{loader.atlas_name}.glm{loader.glm}.ref{ref_session}_obs'
+    stem     = f'{loader.atlas_name}.glm{loader.glm}.ref{ref_session}_{ref}'
 
     for data in loader:
-        # the subject's own observed G in ref_session
         path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
-        fname  = f'G_obs.within_session.{ref_session}.glm{loader.glm}.{data.Hem}.{data.roi}.npy'
-        G_obs  = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}', fname))
+
+        if ref == 'obs':
+            # the subject's own observed G in ref_session
+            fname = f'G_obs.within_session.{ref_session}.glm{loader.glm}.{data.Hem}.{data.roi}.npy'
+            G_obs = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}', fname))
+        else:
+            # the other subjects' mean G in ref_session, on this subject's chord order
+            chords = util.get_trained_and_untrained(data.sn)
+            order  = np.array(chords).astype(int)
+            G_obs  = models.group_geometry(loader.glm, data.Hem, data.roi, order=order, session=ref_session,
+                                           crossval=True, sn=data.sn)
 
         # make G positive definite and normalise to tr=1
         G_obs  = (G_obs + G_obs.T) / 2
@@ -101,14 +121,18 @@ def fit_model_transfer(loader, ref_session=3, sessions=None):
         G_untr = G_dict['untrained']
 
         # model list
-        Gc_transfer  = np.array([G_ref])
-        Gc_identity  = np.array([G_ref, G_id])
-        Gc_trained   = np.array([G_ref, G_type, G_tr])
-        Gc_untrained = np.array([G_ref, G_type, G_untr])
+        Gc_transfer      = np.array([G_ref])
+        Gc_identity      = np.array([G_ref, G_id])
+        Gc_id_trained    = np.array([G_id, G_type, G_tr])
+        Gc_id_untrained  = np.array([G_id, G_type, G_untr])
+        Gc_ref_trained   = np.array([G_ref, G_type, G_tr])
+        Gc_ref_untrained = np.array([G_ref, G_type, G_untr])
         M = [pcm.ComponentModel('transfer',           Gc_transfer),
              pcm.ComponentModel('transfer_identity',  Gc_identity),
-             pcm.ComponentModel('transfer_trained',   Gc_trained),
-             pcm.ComponentModel('transfer_untrained', Gc_untrained)]
+             pcm.ComponentModel('identity_trained',   Gc_id_trained),
+             pcm.ComponentModel('identity_untrained', Gc_id_untrained),
+             pcm.ComponentModel('transfer_trained',   Gc_ref_trained),
+             pcm.ComponentModel('transfer_untrained', Gc_ref_untrained)]
 
         for session in sessions:
             print(f'model transfer: subj{data.sn}, ref session {ref_session} -> session {session}, {data.Hem}, {data.roi}')

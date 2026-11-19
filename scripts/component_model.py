@@ -133,15 +133,18 @@ def fit_model_transfer(sns            = gl.participants,
                        atlas_name     = 'ROI',
                        residual_fname = 'residual.dtseries.nii',
                        ref_session    = 3,
-                       sessions       = (3, 9, 23)):
-    """Likelihood of every session's data under the subject's own G of ``ref_session``,
-    alone and with identity, type + trained or type + untrained added (:func:`pcm.fit_model_transfer`).
+                       sessions       = (3, 9, 23),
+                       ref            = 'group'):
+    """Likelihood of every session's data under a reference G of ``ref_session`` (``ref``:
+    'obs' the subject's own, 'group' the other subjects' mean), alone and with identity,
+    type + trained or type + untrained added, plus identity + type + trained / untrained
+    without it (:func:`pcm.fit_model_transfer`).
 
     Needs the ``G_obs`` of ``ref_session`` (``pattern.py``, step ``calc_G_rois``). Collect
     the pickles with step ``make_transfer_dataframe``, after step ``fit_ceil``.
     """
     loader = betas.BetasPrewithenedLoader(sns=sns, glm=glm, atlas_name=atlas_name, residual_fname=residual_fname)
-    pcm_.fit_model_transfer(loader, ref_session=ref_session, sessions=sessions)
+    pcm_.fit_model_transfer(loader, ref_session=ref_session, sessions=sessions, ref=ref)
 
 
 def fit_model_ceil(sns            = gl.participants,
@@ -198,13 +201,15 @@ def fit_model_split(sns            = gl.participants,
 
 
 
-def make_transfer_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', ref_session=3, sessions=(3, 9, 23)):
+def make_transfer_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', ref_session=3, sessions=(3, 9, 23), ref='group'):
     """Likelihoods of step ``fit_transfer`` next to the noise ceilings and the null model,
     one row per (sn, session, Hem, roi).
 
     Columns, all from fits to the same session's data:
-        transfer            the subject's ``ref_session`` G                    (``model_transfer.T``)
+        transfer            the ``ref_session`` G (``ref``: 'obs' or 'group')  (``model_transfer.T``)
         transfer_identity   transfer + identity                                (``model_transfer.T``)
+        identity_trained    identity + type + trained, no ref G                (``model_transfer.T``)
+        identity_untrained  identity + type + untrained, no ref G              (``model_transfer.T``)
         transfer_trained    transfer + type + trained                          (``model_transfer.T``)
         transfer_untrained  transfer + type + untrained                        (``model_transfer.T``)
         upper_ceil          free G fitted to the subject                       (``model_ceil.T_in``)
@@ -212,10 +217,10 @@ def make_transfer_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', ref_se
         null                the family's empty model, ``base``                 (``model_family.T_in``)
         identity            identity alone                                     (``model_family.T_in``)
 
-    Written to ``model_transfer.<atlas>.glm<glm>.ref<ref_session>_obs.tsv`` in the pcm dir.
+    Written to ``model_transfer.<atlas>.glm<glm>.ref<ref_session>_<ref>.tsv`` in the pcm dir.
     """
     rois = gl.rois[atlas_name]
-    stem = f'{atlas_name}.glm{glm}.ref{ref_session}_obs'   # as in pcm.fit_model_transfer
+    stem = f'{atlas_name}.glm{glm}.ref{ref_session}_{ref}'   # as in pcm.fit_model_transfer
 
     df = []
     for sn, H, roi in itertools.product(sns, gl.Hem, rois):
@@ -233,6 +238,8 @@ def make_transfer_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', ref_se
 
             df.append({'transfer'           : T.likelihood['transfer'].iloc[0],
                        'transfer_identity'  : T.likelihood['transfer_identity'].iloc[0],
+                       'identity_trained'   : T.likelihood['identity_trained'].iloc[0],
+                       'identity_untrained' : T.likelihood['identity_untrained'].iloc[0],
                        'transfer_trained'   : T.likelihood['transfer_trained'].iloc[0],
                        'transfer_untrained' : T.likelihood['transfer_untrained'].iloc[0],
                        'upper_ceil'         : T_in.likelihood['upper_ceil'].iloc[0],
@@ -240,6 +247,7 @@ def make_transfer_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', ref_se
                        'null'               : T_mf.likelihood['base'].iloc[0],
                        'identity'           : T_mf.likelihood['identity'].iloc[0],
                        'ref_session'        : ref_session,
+                       'ref'                : ref,
                        'sn'                 : sn,
                        'session'            : session,
                        'Hem'                : H,
@@ -279,6 +287,7 @@ if __name__=='__main__':
     parser.add_argument('--sessions', nargs='+', type=int, default=(3, 9, 23), help='participant ids to include in the analysis')
     parser.add_argument('--comp_names', nargs='+', default=['identity', 'trained', 'untrained', 'single finger', 'muscle pattern', 'hand use', 'signed force pattern', 'mean deviation', 'flexion-extension bias', 'mean force magnitude'], type=str, help='components to include, keys of models.make_G_dict (quote names with spaces)')
     parser.add_argument('--ref_session', type=int, default=None, help='session whose component weights carry over to the others (steps fit_transfer*, transfer*; default 3)')
+    parser.add_argument('--ref', default=None, choices=['obs', 'group'], help="reference G of steps fit_transfer and make_transfer_dataframe: the subject's own ('obs') or the other subjects' mean ('group', default)")
     args = parser.parse_args()
 
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}
