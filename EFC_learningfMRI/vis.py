@@ -576,21 +576,27 @@ def plot_force_pattern(fig, axs, df, chords=None, x='finger', y='force_raw', ord
         ax.set_ylabel(None)
         ax.set_xticks(range(len(order)), order, rotation=90)
 
+        ax.axhspan(-gl.fthresh, gl.fthresh, color='grey', alpha=0.2, lw=0)
+        ax.axhline(2, color='k', lw=.8, ls=':')
+        ax.axhline(-2, color='k', lw=.8, ls=':')
+        ax.axhline(5, color='k', lw=.8, ls=':')
+        ax.axhline(-5, color='k', lw=.8, ls=':')
+
         # the digits sit in gl.fingers order, so digit i belongs to tick i
         if instructed:
             for i, digit in enumerate(str(chord)):
                 d = CHORD_DIRECTION[digit]
                 if d:
-                    ax.plot(i, .98 if d > 0 else .02, marker='^' if d > 0 else 'v', ms=4, color='grey',
+                    ax.plot(i, .98 if d > 0 else .02, marker='^' if d > 0 else 'v', ms=4, color='k',
                             transform=blended_transform_factory(ax.transData, ax.transAxes), clip_on=False)
 
         # the y axis is shared, so only the leftmost column of the grid keeps it
         first_col = ax.get_subplotspec().is_first_col() if ax.get_subplotspec() is not None else c == 0
         if not first_col:
-            sb.despine(ax=ax, left=True)
+            sb.despine(ax=ax, left=True, trim=True)
             ax.tick_params(left=False, labelleft=False)
         else:
-            sb.despine(ax=ax)
+            sb.despine(ax=ax, trim=True)
         if add_zero is not False:
             ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
 
