@@ -109,7 +109,7 @@ class RegInfo:
     @cached_property
     def reginfo(self):
         """The raw reginfo.tsv as a DataFrame."""
-        path = os.path.join(gl.baseDir, f'glm{self.glm}', f'subj{self.sn}', 'reginfo.tsv')
+        path = os.path.join(gl.baseDir, f'{gl.glmDir}{self.glm}', f'subj{self.sn}', 'reginfo.tsv')
         return pd.read_csv(path, sep='\t')
 
     @cached_property
@@ -170,17 +170,18 @@ def parse_regressor_name(name, sep=','):
     return pd.DataFrame(tuple(parts[col] for col in parts.columns)).T
 
 
-def get_trained_and_untrained(sn):
+def get_trained_and_untrained(sn, experiment='EFC_learningfMRI'):
     """
     Retrieve which chords where trained and untrained in participant sn.
     Args:
         sn: participant number
+        experiment: folder in gl.baseDir with the participants.tsv (e.g. gl.emgDir)
 
     Returns:
         list of chordIDs. First four are trained, last four untrained
     """
 
-    pinfo     = pd.read_csv(os.path.join(gl.baseDir, 'participants.tsv'), sep='\t')
+    pinfo     = pd.read_csv(os.path.join(gl.baseDir, experiment, 'participants.tsv'), sep='\t')
     trained   = pinfo[pinfo.sn == sn].reset_index()['trained'][0].split('.')
     untrained = pinfo[pinfo.sn == sn].reset_index()['untrained'][0].split('.')
     chords    = list()
@@ -207,6 +208,9 @@ def runs_to_keep(cond_vec, session='all', repetition='all', chord='all'):
     Returns:
         Boolean array of length ``len(cond_vec)``, True for rows passing every filter.
     """
+    if _is_all(session) and _is_all(repetition) and _is_all(chord) and np.ndim(cond_vec) == 1:
+        return np.ones(len(cond_vec), dtype=bool)   # nothing to filter, so any label format works
+
     cond = parse_cond_vec(cond_vec)
     keep = np.ones(len(cond), dtype=bool)
 
@@ -237,6 +241,14 @@ def runs_to_keep(cond_vec, session='all', repetition='all', chord='all'):
                              f'cond_vec holds slots {sorted(cond.chord.unique().tolist())}')
 
     return keep
+
+
+def split_half(cond_vec, part_vec, session, half):
+    """Boolean mask over regressor rows: one half (0 or 1) of a session's runs, split
+    alternately (1st, 3rd, ... run of the session in half 0; 2nd, 4th, ... in half 1)."""
+    keep = runs_to_keep(cond_vec, session=session)
+    runs = np.unique(part_vec[keep])
+    return keep & np.isin(part_vec, runs[half::2])
 
 
 def add_chord_column(df, chordID_col='chordID', sn_col='sn', out_col='chord'):
@@ -522,6 +534,170 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
     """
     import pingouin as pg   # heavy import; only this helper needs it
 
+    rows = []
+    for key, a, b, sample_a, sample_b in _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):
+        res = pg.ttest(sample_a, sample_b, paired=paired and hue is not None, alternative=alternative).iloc[0]
+        rows.append({**key,
+                     'A'      : a,
+                     'B'      : b,
+                     'T'      : res['T'],
+                     'dof'    : res['dof'],
+                     'p_val'  : res['p_val'],
+                     'CI95'   : res['CI95'],       # of the A - B difference (of the mean, one-sample); pingouin rounds it to 2 decimals
+                     'cohen_d': res['cohen_d'],    # unsigned -- the sign of the effect is in T
+                     'BF10'   : res.get('BF10', np.nan),   # pingouin only reports it for the two-sided test
+                     'power'  : res.get('power', np.nan)})
+
+    return pd.DataFrame(rows)
+
+
+def sign_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, roi_col='roi', subject_col='sn', alternative='two-sided', popmean=0):
+    """Sign tests between ``hue`` levels, one per level of ``x`` (and per ROI).
+
+    The non-parametric twin of :func:`ttest_im_sess`: same table, same arguments,
+    same pairing of subjects, but each test counts how many subjects have
+    A > B and tests that count against a fair coin (exact binomial test), so
+    it assumes nothing about the distribution of the differences::
+
+        sign = signtest_im_sess(dist_chord_sess, rois, y='crossnobis', hue='chord',
+                                hue_order=['trained', 'untrained'])
+        print(sign[['roi', 'session', 'n_pos', 'n_neg', 'median_diff', 'p_val']])
+
+    Leave ``hue`` out to test the ``y`` values themselves against ``popmean``.
+    Subjects whose difference is exactly zero (ties) are dropped from the test, as
+    is standard, and counted in ``n_ties``. The test is always paired, so there is
+    no ``paired`` argument.
+
+    Parameters
+    ----------
+    df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean
+        As in :func:`ttest_im_sess`.
+    alternative : {'two-sided', 'less', 'greater'}, optional
+        ``'greater'`` tests A > B (more positive than negative differences);
+        passed to :func:`scipy.stats.binomtest`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ROI / ``x`` level / pair of ``hue`` levels, with columns
+        ``A``, ``B``, ``n_pos`` (subjects with A > B), ``n_neg``, ``n_ties``,
+        ``median_diff`` (median of A - B, ties included), ``p_val``, plus the ``x``
+        column and, unless ``roi_col`` is None, ``roi_col``.
+        The one-sample rows carry ``A = y`` and ``B = popmean``.
+    """
+    rows = []
+    for key, a, b, sample_a, sample_b in _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):
+        diff  = np.asarray(sample_a, dtype=float) - np.asarray(sample_b, dtype=float)
+        n_pos = int((diff > 0).sum())
+        n_neg = int((diff < 0).sum())
+        n     = n_pos + n_neg
+        rows.append({**key,
+                     'A'          : a,
+                     'B'          : b,
+                     'n_pos'      : n_pos,
+                     'n_neg'      : n_neg,
+                     'n_ties'     : len(diff) - n,
+                     'median_diff': np.median(diff) if len(diff) else np.nan,
+                     'p_val'      : scipy.stats.binomtest(n_pos, n, 0.5, alternative=alternative).pvalue if n else np.nan})
+
+    return pd.DataFrame(rows)
+
+
+def anova_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, roi_col='roi', subject_col='sn', fisher_z=False):
+    """Repeated-measures test of a change over ``x``, one per ``hue`` level (and per ROI).
+
+    Where :func:`ttest_im_sess` compares ``hue`` levels within each session, this
+    tests each ``hue`` level across the levels of ``x``: a one-way repeated-measures
+    ANOVA (with its Friedman twin), plus paired t-tests between every pair of ``x``
+    levels, signed later minus earlier. Same long-format table and arguments as the
+    ``plot_*_sess`` functions::
+
+        res = anova_im_sess(model_corr[model_corr.Hem == 'L'], rois, y='r', hue='model',
+                            hue_order=comp_names, fisher_z=True)
+
+    ``p_fdr`` is Benjamini-Hochberg over every row returned, so leave out of
+    ``hue_order`` any level that duplicates another (``untrained`` = -``trained``).
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Long-format table with one row per subject / ROI / ``x`` / ``hue`` cell.
+    rois : list, optional
+        ROIs to test, in order (default: all in ``roi_col``).
+    x : str, optional
+        Within-subject factor whose effect is tested (default ``'session'``).
+    y : str
+        Column holding the values to test.
+    hue : str, optional
+        Column whose levels are tested separately; ``None`` for one test per ROI.
+    hue_order : list, optional
+        Levels of ``hue`` to test, in order (default: order of appearance).
+    roi_col : str, optional
+        Column holding the ROI names; ``None`` for a table with no ROIs.
+    subject_col : str, optional
+        Column identifying the subject (default ``'sn'``).
+    fisher_z : bool, optional
+        Test ``arctanh(y)`` instead of ``y`` (for correlations). The ``mean_*``
+        columns stay on the original scale.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ``hue`` level / ROI, with ``n``, ``mean_<level>`` per ``x``
+        level, ``F``, ``dof1``, ``dof2``, ``p_val``, ``p_GG`` (Greenhouse-Geisser),
+        ``p_fdr`` (of ``p_val``), ``p_friedman``, and ``T_<b>-<a>``, ``p_<b>-<a>``
+        for every pair of ``x`` levels.
+    """
+    import pingouin as pg   # heavy import; only the test helpers need it
+    from statsmodels.stats.multitest import multipletests
+
+    if y is None:
+        raise ValueError("y (the values to test) is required")
+
+    hues = [None] if hue is None else (list(df[hue].unique()) if hue_order is None else hue_order)
+    if roi_col is None:
+        rois = [None]
+    elif rois is None:
+        rois = df[roi_col].unique()
+
+    x_levels = np.sort(df[x].unique())
+
+    rows = []
+    for h in hues:
+        for roi in rois:
+            d = df if h is None else df[df[hue]==h]
+            d = d if roi is None else d[d[roi_col]==roi]
+
+            piv = d.pivot(index=subject_col, columns=x, values=y)[x_levels].dropna()   # raises on duplicate cells
+            z   = np.arctanh(piv.clip(-.999999, .999999)) if fisher_z else piv
+            lng = z.reset_index().melt(id_vars=subject_col, var_name=x, value_name='val')
+
+            aov = pg.rm_anova(lng, dv='val', within=x, subject=subject_col, correction=True).iloc[0]
+            row = {} if h is None else {hue: h}
+            row.update({} if roi is None else {roi_col: roi})
+            row['n'] = len(piv)
+            row.update({f'mean_{lev}': piv[lev].mean() for lev in x_levels})
+            row.update({'F'         : aov['F'],
+                        'dof1'      : aov['ddof1'],
+                        'dof2'      : aov['ddof2'],
+                        'p_val'     : aov['p_unc'],
+                        'p_GG'      : aov.get('p_GG_corr', aov['p_unc']),
+                        'p_friedman': scipy.stats.friedmanchisquare(*[z[lev] for lev in x_levels]).pvalue})
+            rows.append(row)
+
+    res = pd.DataFrame(rows)
+    
+    return res
+
+
+def _im_sess_samples(df, rois, x, y, hue, hue_order, roi_col, subject_col, popmean):
+    """Yield ``(key, A, B, sample_A, sample_B)`` for every test of the ``*_im_sess`` tests.
+
+    ``key`` holds the ROI (unless ``roi_col`` is None) and ``x`` level of the test.
+    With ``hue``, the samples are the ``y`` values of each pair of ``hue`` levels,
+    aligned on ``subject_col``, with the subjects missing either level dropped. Without
+    ``hue``, ``sample_A`` is ``y`` and ``sample_B`` is the scalar ``popmean``.
+    """
     if y is None:
         raise ValueError("y (the values to test) is required")
 
@@ -537,7 +713,6 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
 
     x_levels = np.sort(df[x].unique())
 
-    rows = []
     for roi in rois:
 
         df_roi = df if roi_col is None else df[df[roi_col]==roi]
@@ -545,38 +720,20 @@ def ttest_im_sess(df, rois=None, x='session', y=None, hue=None, hue_order=None, 
         for level in x_levels:
 
             df_level = df_roi[df_roi[x]==level]
+            key      = {x: level} if roi_col is None else {roi_col: roi, x: level}
 
-            # (A, B, sample_A, sample_B) per test; pingouin takes a scalar as the
-            # second argument, which is what makes the one-sample case the same call
             if one_sample:
                 vals = df_level.set_index(subject_col)[y]
                 if vals.index.has_duplicates:
                     raise ValueError(f'more than one row per {subject_col} in {x}={level}'
                                      + ('' if roi_col is None else f', {roi_col}={roi}'))
-                tests = [(y, popmean, vals.dropna(), popmean)]
+                yield key, y, popmean, vals.dropna(), popmean
             else:
                 piv        = df_level.pivot(index=subject_col, columns=hue, values=y)
                 hue_levels = [h for h in hue_order if h in piv.columns]
-                tests      = []
                 for a, b in itertools.combinations(hue_levels, 2):
                     pair = piv[[a, b]].dropna()
-                    tests.append((a, b, pair[a], pair[b]))
-
-            for a, b, sample_a, sample_b in tests:
-                res = pg.ttest(sample_a, sample_b, paired=paired and not one_sample, alternative=alternative).iloc[0]
-                row = {x        : level,
-                       'A'      : a,
-                       'B'      : b,
-                       'T'      : res['T'],
-                       'dof'    : res['dof'],
-                       'p_val'  : res['p_val'],
-                       'CI95'   : res['CI95'],       # of the A - B difference (of the mean, one-sample); pingouin rounds it to 2 decimals
-                       'cohen_d': res['cohen_d'],    # unsigned -- the sign of the effect is in T
-                       'BF10'   : res.get('BF10', np.nan),   # pingouin only reports it for the two-sided test
-                       'power'  : res.get('power', np.nan)}
-                rows.append(row if roi_col is None else {roi_col: roi, **row})
-
-    return pd.DataFrame(rows)
+                    yield key, a, b, pair[a], pair[b]
 
 
 def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Diff', roi_col='roi', subject_col='sn', coef='Intercept'):
@@ -669,33 +826,55 @@ def regress_im_sess(df_y, df_x, rois=None, x='session', y='Diff', regressor='Dif
     return out
 
 
-def component_bayesfactor(df, components, require_any=(), id_cols=('sn', 'session', 'Hem', 'roi')):
-    """AIC-corrected log Bayes factor of each component, from the model family likelihoods.
+def component_bayesfactor(df, family=None, require=(), penalty=1, id_cols=('sn', 'session', 'Hem', 'roi')):
+    """Penalised log Bayes factor of each component, from the model family likelihoods.
 
     ``df`` is the wide ``model_family.likelihood.*.tsv``: one row per participant and
-    cell, one column per model, the first model being the base alone. As
+    cell, one column per model (a ``ceil`` column, the noise ceiling, is ignored), the first model being the base alone. As
     ``PcmPy`` ``ModelFamily.component_bayesfactor(method='AIC')``: every model is
     penalised by its number of components (``LL - k``), and a component's log Bayes
     factor is the log summed evidence of the models with it minus that of the models
-    without it.
+    without it. A Bayes factor is returned for every component that varies across the
+    family, i.e. all of them but the base and ``require``.
 
-    ``require_any`` restricts the family to the models holding at least one of those
-    components (e.g. the three force models), so the evidence for ``components`` is
-    taken only among models that already explain the force patterns.
+    ``penalty`` is the log-likelihood cost of each component (``LL - penalty * k``): 1 is
+    AIC (the default), ``log(n) / 2`` BIC, and 0 for likelihoods that are already
+    cross-validated (``model_family_cv.likelihood.*.tsv``), which need no penalty.
+
+    ``family`` restricts the family to the models built only from those components
+    (the base model included), i.e. the sub-family of all their combinations. The
+    components left out are then absent from every model, rather than marginalised
+    over as they are by default (``None``: the whole family in ``df``)::
+
+        bf = component_bayesfactor(mf_likelihood, family=['single finger', 'hand use', 'muscle pattern'])
+
+    ``require`` keeps only the models holding every one of those components (e.g. the
+    three force models), so the evidence for the others is taken only among models that
+    already explain the force patterns. It acts as an extra base: those components are
+    in every model left, so they get no Bayes factor.
 
     Returns a long table: ``id_cols``, ``component`` and ``log_bf``.
     """
-    models = [c for c in df.columns if c not in id_cols]
+    models = [c for c in df.columns if c not in id_cols and c != 'ceil']   # the cv tsv also holds the noise ceiling
     base   = set(models[0].split('+'))                  # the first model: the base components alone, or 'null'
     comps  = {m: set(m.split('+')) - base for m in models}
 
-    if require_any:
-        models = [m for m in models if comps[m] & set(require_any)]
+    all_comps = list(dict.fromkeys(c for m in models for c in comps[m]))   # in order of appearance
+    if family is None:
+        family = all_comps
+    if set(family) - set(all_comps):
+        raise ValueError(f'family components not in any model: {sorted(set(family) - set(all_comps))}')
+    if set(require) - set(family):
+        raise ValueError(f'require not in family: {sorted(set(require) - set(family))}')
 
-    crit = df[models].to_numpy() - np.array([len(comps[m]) for m in models])   # LL - k
+    # the sub-family built from `family` (the base model has no components, so it always
+    # stays), then only its models holding every `require` component
+    models = [m for m in models if comps[m] <= set(family) and set(require) <= comps[m]]
+
+    crit = df[models].to_numpy() - penalty * np.array([len(comps[m]) for m in models])   # LL - penalty * k
 
     out = []
-    for comp in components:
+    for comp in [c for c in family if c not in require]:
         has    = np.array([comp in comps[m] for m in models])
         bf     = df[list(id_cols)].copy()
         bf['component'] = comp
@@ -703,6 +882,52 @@ def component_bayesfactor(df, components, require_any=(), id_cols=('sn', 'sessio
         out.append(bf)
 
     return pd.concat(out, ignore_index=True)
+
+
+def sum_coded_effects(res, data, a, b):
+    """One effect per level of ``a``, per level of ``b`` and per (a, b) cell, from a model fitted as
+    ``y ~ C(a, Sum) * C(b, Sum)`` (e.g. ``statsmodels`` ``mixedlm``).
+
+    Sum coding estimates every level but the last of each factor, as a deviation from the grand
+    mean; the last one is minus the sum of the others. This puts the left-out levels back, with
+    their standard errors from the fit's covariance, so every level has its own row. The levels are
+    sorted as patsy sorts them. Returns ``term`` (intercept, ``a``, ``b`` or ``a x b``), ``level``,
+    ``coef``, ``se``, ``z`` and the two-sided ``p_val``.
+    """
+    la, lb = sorted(data[a].unique()), sorted(data[b].unique())
+    Ca = np.vstack([np.eye(len(la) - 1), -np.ones(len(la) - 1)])   # level x estimated level: the last level is -1 everywhere
+    Cb = np.vstack([np.eye(len(lb) - 1), -np.ones(len(lb) - 1)])
+
+    names = list(res.fe_params.index)
+    col_a = [names.index(f'C({a}, Sum)[S.{l}]') for l in la[:-1]]
+    col_b = [names.index(f'C({b}, Sum)[S.{l}]') for l in lb[:-1]]
+    col_ab = np.array([[names.index(f'C({a}, Sum)[S.{p}]:C({b}, Sum)[S.{q}]') for q in lb[:-1]] for p in la[:-1]])
+
+    L, rows = [], []
+    L.append(np.eye(len(names))[names.index('Intercept')])
+    rows.append(('intercept', ''))
+    for i, l in enumerate(la):
+        v = np.zeros(len(names)); v[col_a] = Ca[i]
+        L.append(v); rows.append((a, l))
+    for j, l in enumerate(lb):
+        v = np.zeros(len(names)); v[col_b] = Cb[j]
+        L.append(v); rows.append((b, l))
+    for i, p in enumerate(la):
+        for j, q in enumerate(lb):
+            v = np.zeros(len(names)); v[col_ab] = np.outer(Ca[i], Cb[j])
+            L.append(v); rows.append((f'{a} x {b}', f'{p} x {q}'))
+
+    L    = np.array(L)
+    cov  = res.cov_params().loc[names, names].to_numpy()
+    coef = L @ res.fe_params.to_numpy()
+    se   = np.sqrt(np.einsum('ij,jk,ik->i', L, cov, L))
+
+    out = pd.DataFrame(rows, columns=['term', 'level'])
+    out['coef']  = coef
+    out['se']    = se
+    out['z']     = coef / se
+    out['p_val'] = 2 * scipy.stats.norm.sf(np.abs(out.z))
+    return out
 
 
 def load_glm_onset(sn, glm, output_events=False):
@@ -715,7 +940,7 @@ def load_glm_onset(sn, glm, output_events=False):
     two). The glm stacks the runs it kept back to back, so a trial's onset is set by the
     position of its run among the kept ones, not by its BN.
     """
-    pinfo  = pd.read_csv(os.path.join(gl.baseDir, 'participants.tsv'), sep='\t')
+    pinfo  = pd.read_csv(os.path.join(gl.baseDir, 'EFC_learningfMRI/participants.tsv'), sep='\t')
     prow   = pinfo.loc[pinfo.participant_id == f"subj{sn}"].iloc[0]
 
     events = pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, 'day3', f'efc4_subj{sn}_glm{glm}_events.tsv'), sep='\t')

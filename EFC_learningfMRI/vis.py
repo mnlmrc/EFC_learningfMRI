@@ -172,6 +172,21 @@ def plot_pcm_corr(fig, axs, df, corr, rois=None, x='SNR', y='r_indiv', hue='chor
             ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
 
 
+def add_noise_ceiling(axs, df, rois=None, lower='lower', upper='upper', roi_col='roi', sn_col='sn', color='grey', alpha=.3, **kwargs):
+    """Shade the noise ceiling, from the mean lower to the mean upper bound, one panel per roi.
+
+    The bounds are one value per participant, repeated on every model row, so they
+    are reduced to one per participant before averaging.
+    """
+    if rois is None:
+        rois = df[roi_col].unique()
+
+    for r, roi in enumerate(rois):
+        ax    = axs[r] if len(rois) > 1 else axs
+        bound = df[df[roi_col] == roi].groupby(sn_col)[[lower, upper]].first().mean()
+        ax.axhspan(bound[lower], bound[upper], color=color, alpha=alpha, lw=0, zorder=0, **kwargs)
+
+
 def plot_mat_sess(fig, axs, mats, sessions=gl.sessions, labels=None, n_trained=4, cmap='viridis',
                   vmin=None, vmax=None, cbar=True, cbar_label=None, **kwargs):
     """One square matrix per session, every panel on the same colour scale.
@@ -209,6 +224,19 @@ def plot_mat_sess(fig, axs, mats, sessions=gl.sessions, labels=None, n_trained=4
 
     if cbar:
         fig.colorbar(im, ax=list(axs[:len(sessions)]), label=cbar_label, shrink=.6)
+
+
+def jackknife_errorbar(x):
+    """Mean +- jackknife SE of leave-one-out estimates, as a seaborn ``errorbar`` (pass the function itself).
+
+    ``x`` holds one estimate per left-out subject (e.g. the weights of :func:`pcm.fit_model_group_crossval`).
+    The estimates share all subjects but two, so their plain SE is far too small; the jackknife SE scales
+    their spread up: ``sqrt((n - 1) / n * sum((x - mean) ** 2))``.
+    """
+    x  = np.asarray(x)
+    n  = len(x)
+    se = np.sqrt((n - 1) / n * np.sum((x - x.mean()) ** 2))
+    return x.mean() - se, x.mean() + se
 
 
 def plot_im_sess(fig, axs, df, rois=None, x='session', y=None, hue=None, hue_order=None, palette=None, color=None, add_zero=False, kind='point', roi_col=None, native_scale=True, legend=True, alpha=1, **kwargs):
@@ -548,21 +576,27 @@ def plot_force_pattern(fig, axs, df, chords=None, x='finger', y='force_raw', ord
         ax.set_ylabel(None)
         ax.set_xticks(range(len(order)), order, rotation=90)
 
+        ax.axhspan(-gl.fthresh, gl.fthresh, color='grey', alpha=0.2, lw=0)
+        ax.axhline(2, color='k', lw=.8, ls=':')
+        ax.axhline(-2, color='k', lw=.8, ls=':')
+        ax.axhline(5, color='k', lw=.8, ls=':')
+        ax.axhline(-5, color='k', lw=.8, ls=':')
+
         # the digits sit in gl.fingers order, so digit i belongs to tick i
         if instructed:
             for i, digit in enumerate(str(chord)):
                 d = CHORD_DIRECTION[digit]
                 if d:
-                    ax.plot(i, .98 if d > 0 else .02, marker='^' if d > 0 else 'v', ms=4, color='grey',
+                    ax.plot(i, .98 if d > 0 else .02, marker='^' if d > 0 else 'v', ms=4, color='k',
                             transform=blended_transform_factory(ax.transData, ax.transAxes), clip_on=False)
 
         # the y axis is shared, so only the leftmost column of the grid keeps it
         first_col = ax.get_subplotspec().is_first_col() if ax.get_subplotspec() is not None else c == 0
         if not first_col:
-            sb.despine(ax=ax, left=True)
+            sb.despine(ax=ax, left=True, trim=True)
             ax.tick_params(left=False, labelleft=False)
         else:
-            sb.despine(ax=ax)
+            sb.despine(ax=ax, trim=True)
         if add_zero is not False:
             ax.axhline(0 if add_zero is True else add_zero, lw=.8, color='k', ls=':')
 

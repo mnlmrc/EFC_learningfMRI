@@ -2,229 +2,21 @@ import PcmPy as pcm
 import os
 import itertools
 import functools
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Sequence
 import numpy as np
-from EFC_learningfMRI.util import  get_trained_and_untrained, runs_to_keep
-from EFC_learningfMRI.G_matrix import G_sorted
+from EFC_learningfMRI.util import runs_to_keep
+import EFC_learningfMRI.util as util
 from EFC_learningfMRI.betas import BetasPrewithenedLoader
 import EFC_learningfMRI.globals as gl
+import EFC_learningfMRI.models as models
 from imaging_pipelines.util import calc_mle_corr
 import nitools as nt
 import nibabel as nb
 import pandas as pd
 import pickle
-
-C = pcm.centering(8)
-
-FINGER = {
-     21911: np.array([1, 1, 0, 1, 1]),
-     92122: np.array([0, 1, 1, 1, 1]),
-     91211: np.array([0, 1, 1, 1, 1]),
-     22911: np.array([1, 1, 0, 1, 1]),
-     21291: np.array([1, 1, 1, 0, 1]),
-     12129: np.array([1, 1, 1, 1, 0]),
-     12291: np.array([1, 1, 1, 0, 1]),
-     11911: np.array([1, 1, 0, 1, 1])
-}
-
-PATTERN = {
-     21911: np.array([-1,  1,  0,  1,  1]),
-     92122: np.array([ 0, -1,  1, -1, -1]),
-     91211: np.array([ 0,  1, -1,  1,  1]),
-     22911: np.array([-1, -1,  0,  1,  1]),
-     21291: np.array([-1,  1, -1,  0,  1]),
-     12129: np.array([ 1, -1,  1, -1,  0]),
-     12291: np.array([ 1, -1, -1,  0,  1]),
-     11911: np.array([ 1,  1,  0,  1,  1])
-}
-
-# FLEXION = {
-#     21911: 1,
-#     92122: 3,
-#     91211: 1,
-#     22911: 2,
-#     21291: 2,
-#     12129: 2,
-#     12291: 2,
-#     11911: 0
-# }
-
-
-def fixed_models():
-    
-    # trained untrained
-    v_tr_untr = np.array([-1, -1, -1, -1, 1, 1, 1, 1])
-    G_tr_untr = C @ np.outer(v_tr_untr, v_tr_untr) @ C
-
-    # trained
-    tr = np.zeros(8)
-    tr[:4] = 1
-    G_tr = C @ np.diag(tr) @ C
-
-    # untrained
-    untr = np.zeros(8)
-    untr[4:] = 1
-    G_untr = C @ np.diag(untr) @ C
-
-    return G_tr_untr, G_tr, G_untr
-
-
-def subj_spec_models(order=None, glm=3):
-
-    """
-    order: list of chords in the order they appear in the G matrices
-    """
-
-    finger  = np.zeros((8, 5))
-    pattern = np.zeros_like(finger)
-    #flexion = np.zeros(8)
-    for i, ch in enumerate(order):
-        #flexion[i] = FLEXION[ch]
-        finger[i]  = FINGER[ch]
-        pattern[i] = PATTERN[ch]
-
-    G_finger  = C @ (finger @ finger.T) @ C
-    G_pattern = C @ (pattern @ pattern.T) @ C
-    #G_flexion = C @ np.outer(flexion, flexion)
-
-    return G_finger, G_pattern #, G_flexion
-
-
-def group_geometry_model(glm, Hem, roi, order=None, sns=gl.participants, session=3):
-    """Group-mean observed G of one ROI: the empirical baseline geometry.
-
-    The crossvalidated Gs that :func:`scripts.pattern.calc_G_rois` writes per subject,
-    averaged over ``sns``. Each is stored in *that* subject's chord order (trained
-    first), so ``G_sorted`` puts every one of them on ``order`` **before** they are
-    averaged: slot *i* is then one physical chord, and what survives the average is the
-    geometry of the chords themselves. Averaged as stored, a different chord would sit
-    in slot *i* for every subject and, the trained sets being counterbalanced, that
-    geometry would wash out -- the mean of the raw slots comes out 0.93 cosine with a
-    uniform G, i.e. little more than overall dissimilarity.
-
-    Pass the chord order of the subject being fitted (``order``), which is the order its
-    data and its other components are in; it defaults to the common ``gl.chordID``.
-
-    As a component this asks how much of a session's geometry is already there in the
-    average geometry of ``session``, so the structural components are fitted on what
-    that baseline leaves over. The subject being fitted is *in* the average (as it was
-    before Aug 31), so the baseline is not independent of it -- drop ``sn`` from ``sns``
-    for a leave-one-out version.
-
-    Reads 16 small .npy per call, ~46 ms, so ~30 s over a whole fit run: not worth
-    caching, and a cache would have to hash ``order``.
-    """
-    order = gl.chordID if order is None else order
-
-    Gs = []
-    for sn in sns:
-        fname = f'G_obs.within_session.{session}.glm{glm}.{Hem}.{roi}.npy'
-        G     = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
-        G     = G_sorted(G, sn, order=order)      # off this subject's own chord order, onto `order`
-        Gs.append(G)
-
-    Gs = np.array(Gs)
-
-    return np.mean(Gs, axis=0)
-
-
-@functools.lru_cache(maxsize=None)
-def _read_behav(fname):
-    return pd.read_csv(os.path.join(gl.baseDir, gl.behavDir, fname), sep='\t')
-
-
-def behav_model(order, measure='MD', fname='efc1_chord.tsv'):
-    """Feature model of a behavioural measure from a normative dataset: the measure is
-    averaged per chord over everyone in ``fname``, so only the chord ``order`` is
-    subject specific. Chords that differ more in it get more distinct patterns."""
-    df = _read_behav(fname)
-
-    values    = pd.to_numeric(df[measure], errors='coerce')
-    per_chord = values.groupby(df['chordID']).mean()     
-    v         = per_chord.loc[order].to_numpy()  
-
-    return C @ np.outer(v, v) @ C
-
-
-def model_Gs(sn, glm=3, Hem=None, roi=None, order=None, force=False, session=3):
-    """Second moment matrix of every model, keyed by name, for one subject.
-
-    The one place the model set is defined: :func:`make_models` wraps these into the
-    PcmPy models it fits, and ``scripts.pattern.make_model_correlation_dataframe``
-    correlates the same matrices against the observed RDMs, so what is fitted and what
-    is correlated cannot drift apart.
-
-    ``order`` is the chord order the matrices come out in, and defaults to the subject's
-    own trained-first order -- the order its betas, and so its fitted G, are in. Pass a
-    common order (``gl.chordID``) to line every subject's models up slot by slot, as the
-    RSA correlations do. ``type``, ``trained`` and ``untrained`` say which chords *this*
-    subject trained, so they are built from the subject's trained set rather than by
-    assuming the first four slots are the trained ones -- the two agree on the default
-    order, and only the common order tells them apart.
-
-    ``Hem`` and ``roi`` add the ROI's ``base`` matrix (see :func:`base_model`), last, so
-    the other components keep their index in ``theta``. ``force`` adds the three force
-    matrices, which are off by default: the participant's own force patterns in
-    ``session``, the session being fitted.
-
-    Returns a dict name -> (8, 8) G, in component order.
-    """
-
-    chords  = np.array(get_trained_and_untrained(sn)).astype(int)
-    order   = chords if order is None else np.asarray(order).astype(int)
-
-    G_tr_untr, G_tr, G_untr = fixed_models()
-
-    G_finger, G_pattern = subj_spec_models(order=order)
-
-    G = {'type'     : G_tr_untr,
-         'trained'  : G_tr,
-         'untrained': G_untr,
-         'finger'   : G_finger,
-         'pattern'  : G_pattern,
-         'MD'       : behav_model(order)}
-
-    if force:
-        for metric in ('raw', 'abs', 'der'):
-            fname                = f'G_obs_raw.within_session.{session}.force.{metric}.npy'
-            G_force              = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', fname))
-            G[f'force_{metric}'] = C @ G_force @ C
-
-    if Hem is not None and roi is not None:
-        G['group_geometry'] = group_geometry_model(glm, Hem, roi, order)  # on the same chord order as every other model
-
-    return G
-
-
-def make_models(sn, glm=3, Hem=None, roi=None, force=False, comp_names=None, session=3):
-    """The model list and the component names for one subject.
-
-    The matrices come from :func:`model_Gs`, on the subject's own trained-first chord
-    order -- the order its data are in. Pass ``Hem`` and ``roi`` to add the ROI's
-    ``group_geometry`` component (see :func:`group_geometry_model`); without them the
-    component model holds the structural components only.
-
-    ``comp_names`` picks the models to use, by name, in order; the default is every
-    model of :func:`model_Gs`. ``session`` is the session whose force patterns the
-    force models are built from.
-    """
-
-    G = model_Gs(sn, glm=glm, Hem=Hem, roi=roi, force=force, session=session)
-
-    if comp_names is None:
-        comp_names = list(G)
-
-    M = [pcm.FixedModel('null', np.zeros((8, 8)))]
-    M += [pcm.FixedModel(name, G[name]) for name in comp_names if name != 'null']  # null is already first
-
-    Gc = [G[name] / np.trace(G[name]) for name in comp_names]  # trace-normalised, so the weights are comparable
-
-    M.append(pcm.ComponentModel('component', np.array(Gc)))
-    M.append(pcm.FreeModel('ceil', 8))
-
-    return M, comp_names
 
 
 def _dump(obj, fname, path):
@@ -233,82 +25,185 @@ def _dump(obj, fname, path):
         pickle.dump(obj, f)
 
 
-def fit_component_model(loader, sessions=None, comp_names=None, base_names=()):
+def fit_model_indiv(loader, sessions=None, comp_names=None):
+    """Fit the model family (every combination of ``comp_names``) to each subject, Hem,
+    ROI and session, without a scale.
 
-    """Fit the models of :func:`make_models` to every (subject, Hem, roi, session).
-
-    Follows the fitting conventions of the pcm-toolbox ``demo_fingers`` notebook:
-
-    - :func:`PcmPy.fit_model_individ` on the full model list, every subject with its
-      own theta. **Every model is fitted with** ``fit_scale=True``: a ``FixedModel``
-      has ``n_param == 0``, so without a scale parameter its G cannot be rescaled to
-      the subject's signal strength and the likelihood ends up reporting the
-      arbitrary size of that G rather than its shape -- which is what puts every
-      fixed model far below the null when ``fit_scale=False``.
-    - :func:`PcmPy.fit_model_group` and :func:`PcmPy.fit_model_group_crossval` on
-      :data:`GROUP_MODELS`, which is what gives the noise ceiling its two bounds:
-      the group fit of ``ceil`` (fitted to every subject, the one it is scored on
-      included, so it overfits) is the upper bound, the crossvalidated group fit
-      (fitted to the other N-1) the lower one.
-
-    The component model also carries the ROI's ``base`` component -- the group-mean
-    observed G of session 3 over ``gl.participants``, see :func:`base_model` -- so the
-    structural components are fitted on top of the empirical baseline geometry rather
-    than on the raw patterns.
-
-    ``comp_names`` is passed on to :func:`make_models`. The components are also fitted
-    as a :class:`PcmPy.model.ModelFamily`: ``base_names`` are in every model of the
-    family, and every combination of the other components is added on top of them.
-
-    The group fits need every subject of a cell at once, so the datasets are kept as
-    the loader yields them -- the loader is the expensive part and only runs once.
-
-    Writes to the pcm dir, one file per cell: ``component_model.T_in.*`` and
-    ``component_model.theta_in.*`` under ``subj<sn>/``, and ``component_model.T_gr.*``
-    and ``component_model.T_cv.*`` at the top level, indexed by subject number.
+    Writes to ``pcm/subj<sn>/``, with ``<stem> = <atlas>.glm<glm>.<session>.<Hem>.<roi>.p``:
+        model_family.T_in.<stem>       likelihoods
+        model_family.theta_in.<stem>   {'theta', 'model_names', 'comp_names'}
     """
-    glm      = loader.glm
-    atlas    = loader.atlas_name
     sessions = gl.sessions if sessions is None else sessions
 
     for data in loader:
+        path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
+
+        # the models don't depend on the session, so build them once per subject and ROI
+        M  = models.make_models(data.sn, glm=loader.glm, Hem=data.Hem, roi=data.roi, comp_names=comp_names)
+        MF = pcm.model.ModelFamily(M[-2].Gc, comp_names=comp_names)   # M[-2] is the component model
+        # MF.models[0].name = 'null'                                     # PcmPy calls the empty model 'base'
+
         for session in sessions:
             keep = runs_to_keep(data.cond_vec, session=session)
 
-            betas    = data.betas[keep]
-            cond_vec = data.cond_vec[keep]
-            part_vec = data.part_vec[keep]
+            Y    = pcm.dataset.Dataset(data.betas[keep], obs_descriptors={'cond_vec': data.cond_vec[keep],
+                                                                          'part_vec': data.part_vec[keep]})
 
-            # make dataset
-            obs_des = {'cond_vec': cond_vec, 'part_vec': part_vec}
-            Y       = pcm.dataset.Dataset(betas, obs_descriptors=obs_des)
+            T_mf, theta_mf = pcm.fit_model_individ(Y, MF,    fit_scale=False, fixed_effect='block', verbose=False)
 
-            model, names = make_models(data.sn, glm=glm, Hem=data.Hem, roi=data.roi, comp_names=comp_names, force=True, session=session)
+            stem = f'{loader.atlas_name}.glm{loader.glm}.{session}.{data.Hem}.{data.roi}.p'
+            
+            _dump(T_mf, f'model_family.T_in.{stem}', path)
+            _dump({'theta': theta_mf, 'model_names': [m.name for m in MF.models], 'comp_names': comp_names}, f'model_family.theta_in.{stem}', path)
 
-            # model family: base_names in every model, every combination of the rest on top
-            Gc        = model[-2].Gc
-            fam_names = [n for n in names if n not in base_names]
-            base      = [names.index(n) for n in base_names]
-            MF = pcm.model.ModelFamily(Gc[[names.index(n) for n in fam_names]],
-                                       basecomponents=Gc[base] if base else None,
-                                       comp_names=fam_names)
-            MF.models[0].name = '+'.join(base_names) or 'null'  # PcmPy calls it 'base'; with no base components it is the null model
 
-            T_in, _        = pcm.fit_model_individ(Y, model, fit_scale=True, verbose=True, fixed_effect='block')
-            T_mf, theta_mf = pcm.fit_model_individ(Y, MF, verbose=False, fixed_effect='block', fit_scale=False)
-            _   , theta_in = pcm.fit_model_individ(Y, model[-2], fit_scale=False, verbose=True, fixed_effect='block')
 
-            path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
-            stem = f'{atlas}.glm{glm}.{session}.{data.Hem}.{data.roi}.p'
-            # the names go in with the theta: a component list that changed since the fit
-            # (a component added, or fit_scale flipped) is then caught by the reader
-            # instead of silently shifting every weight onto the wrong name
-            _dump({'theta': theta_in, 'comp_names': names}, f'component_model.theta_in.{stem}', path)
-            _dump(T_in,     f'component_model.T_in.{stem}',     path)
-            # theta_mf[i] belongs to MF.models[i]; its components are fam_names in that model, then base_names
-            _dump({'theta': theta_mf, 'model_names': [m.name for m in MF.models],
-                   'comp_names': fam_names, 'base_names': list(base_names)}, f'model_family.theta.{stem}', path)
-            _dump(T_mf,     f'model_family.T.{stem}',           path)
+def fit_model_transfer(loader, ref_session=3, sessions=None, ref='group'):
+    """Fit each session's data with a reference G from ``ref_session``.
+
+    G_ref (negative eigenvalues set to 0, trace-normalised) is, by ``ref``:
+        'obs'    the subject's own ``G_obs`` in ``ref_session``
+        'group'  the other subjects' mean ``G_obs`` in ``ref_session``, on this subject's
+                 chord order (:func:`models.group_geometry`, leave-one-subject-out)
+
+    Models:
+
+        transfer            G_ref
+        transfer_identity   G_ref + identity               (noise control)
+        identity_trained    identity + type + trained      (no G_ref)
+        identity_untrained  identity + type + untrained    (no G_ref)
+        transfer_trained    G_ref + type + trained
+        transfer_untrained  G_ref + type + untrained
+
+    transfer_trained and transfer_untrained have the same number of parameters, so their
+    difference tests whether the trained chords changed more than the untrained ones.
+    transfer_trained vs identity_trained (same number of parameters) tests whether G_ref
+    carries information beyond the generic and training structure.
+    With ref='obs', in ``ref_session`` the models are fitted to the data G_ref came from,
+    so they are inflated there; with ref='group' G_ref is independent of the subject's
+    data, so ``ref_session`` is a control (transfer should reach the lower ceiling). The
+    noise ceilings are fitted separately (:func:`fit_model_ceil`).
+
+    Writes to ``pcm/subj<sn>/``:
+        model_transfer.T.<atlas>.glm<glm>.ref<ref_session>_<ref>.<session>.<Hem>.<roi>.p
+    """
+    if ref not in ('obs', 'group'):
+        raise ValueError(f"ref must be 'obs' or 'group', got {ref!r}")
+    sessions = gl.sessions if sessions is None else sessions
+    stem     = f'{loader.atlas_name}.glm{loader.glm}.ref{ref_session}_{ref}'
+
+    for data in loader:
+        path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
+
+        if ref == 'obs':
+            # the subject's own observed G in ref_session
+            fname = f'G_obs.within_session.{ref_session}.glm{loader.glm}.{data.Hem}.{data.roi}.npy'
+            G_obs = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}', fname))
+        else:
+            # the other subjects' mean G in ref_session, on this subject's chord order
+            chords = util.get_trained_and_untrained(data.sn)
+            order  = np.array(chords).astype(int)
+            G_obs  = models.group_geometry(loader.glm, data.Hem, data.roi, order=order, session=ref_session,
+                                           crossval=True, sn=data.sn)
+
+        # make G positive definite and normalise to tr=1
+        G_obs  = (G_obs + G_obs.T) / 2
+        lam, U = np.linalg.eigh(G_obs)
+        lam    = np.clip(lam, 0, None)      # negative eigenvalues to 0
+        G_ref  = U @ np.diag(lam) @ U.T
+        G_ref  = models.normalise(G_ref)
+
+        # on this subject's chord order, the order of its data
+        G_dict = models.make_G_dict(data.sn, glm=loader.glm, Hem=data.Hem, roi=data.roi)
+        G_id   = G_dict['identity']
+        G_type = G_dict['type']
+        G_tr   = G_dict['trained']
+        G_untr = G_dict['untrained']
+
+        # model list
+        Gc_transfer      = np.array([G_ref])
+        Gc_identity      = np.array([G_ref, G_id])
+        Gc_id_trained    = np.array([G_id, G_type, G_tr])
+        Gc_id_untrained  = np.array([G_id, G_type, G_untr])
+        Gc_ref_trained   = np.array([G_ref, G_type, G_tr])
+        Gc_ref_untrained = np.array([G_ref, G_type, G_untr])
+        M = [pcm.ComponentModel('transfer',           Gc_transfer),
+             pcm.ComponentModel('transfer_identity',  Gc_identity),
+             pcm.ComponentModel('identity_trained',   Gc_id_trained),
+             pcm.ComponentModel('identity_untrained', Gc_id_untrained),
+             pcm.ComponentModel('transfer_trained',   Gc_ref_trained),
+             pcm.ComponentModel('transfer_untrained', Gc_ref_untrained)]
+
+        for session in sessions:
+            print(f'model transfer: subj{data.sn}, ref session {ref_session} -> session {session}, {data.Hem}, {data.roi}')
+
+            keep = runs_to_keep(data.cond_vec, session=session)
+            Y    = pcm.dataset.Dataset(data.betas[keep], obs_descriptors={'cond_vec': data.cond_vec[keep],
+                                                                          'part_vec': data.part_vec[keep]})
+
+            T, _ = pcm.fit_model_individ(Y, M, fit_scale=False, fixed_effect='block', verbose=False)
+
+            _dump(T, f'model_transfer.T.{stem}.{session}.{data.Hem}.{data.roi}.p', path)
+
+
+def fit_model_ceil(loader, sessions=None):
+    """Upper and lower noise ceiling of each session's data.
+
+        upper_ceil  free G fitted to the subject
+        lower_ceil  free G fitted to the other subjects, evaluated on this one with its own
+                    scale and noise
+
+    The conditions are relabelled onto ``gl.chordID``, so the free G has the same chord
+    order for every subject. The ceilings only depend on the data, so they hold for any
+    model fitted to the same session with ``fixed_effect='block'``. The crossvalidated
+    fit needs every subject at once, so all betas are held in memory until the end.
+
+    Writes to ``pcm/subj<sn>/``:
+        model_ceil.T_in.<atlas>.glm<glm>.<session>.<Hem>.<roi>.p   upper_ceil
+        model_ceil.T_cv.<atlas>.glm<glm>.<session>.<Hem>.<roi>.p   lower_ceil
+    """
+    sessions = gl.sessions if sessions is None else sessions
+    position = {chord: k for k, chord in enumerate(gl.chordID)}   # the common chord order
+    M_in     = pcm.FreeModel('upper_ceil', len(gl.chordID))
+    M_cv     = pcm.FreeModel('lower_ceil', len(gl.chordID))
+
+    Y_common, sns = defaultdict(list), defaultdict(list)
+    for data in loader:
+        path   = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
+        chords = util.get_trained_and_untrained(data.sn)   # chord ID of each slot of this subject's data
+        chords = np.array(chords).astype(int)
+        sns[data.Hem, data.roi].append(data.sn)
+
+        for session in sessions:
+            print(f'model ceil: subj{data.sn}, session {session}, {data.Hem}, {data.roi}')
+
+            # relabel the conditions onto gl.chordID
+            keep      = runs_to_keep(data.cond_vec, session=session)
+            cond_info = util.parse_cond_vec(data.cond_vec[keep])
+            slot      = cond_info.chord.to_numpy()          # slot 0-7 in this subject's order
+            chord_id  = chords[slot]                        # chord ID of each regressor
+            cond      = np.array([position[c] for c in chord_id])
+            Y         = pcm.dataset.Dataset(data.betas[keep], obs_descriptors={'cond_vec': cond,
+                                                                               'part_vec': data.part_vec[keep]})
+
+            # upper noise ceiling
+            T, _  = pcm.fit_model_individ(Y, M_in, fit_scale=False, fixed_effect='block', verbose=False)
+            fname = f'model_ceil.T_in.{loader.atlas_name}.glm{loader.glm}.{session}.{data.Hem}.{data.roi}.p'
+            _dump(T, fname, path)
+
+            Y_common[data.Hem, data.roi, session].append(Y)
+
+    # lower noise ceiling
+    for (H, roi, session), Ys in Y_common.items():
+        print(f'model ceil, crossvalidated: session {session}, {H}, {roi}')
+
+        T, _ = pcm.fit_model_group_crossval(Ys, M_cv, fixed_effect='block', fit_scale=True, verbose=False)
+
+        for s, sn in enumerate(sns[H, roi]):   # rows of T follow the order of Ys, the order of sns
+            T_s   = T.iloc[[s]]
+            fname = f'model_ceil.T_cv.{loader.atlas_name}.glm{loader.glm}.{session}.{H}.{roi}.p'
+            path  = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}')
+            _dump(T_s, fname, path)
 
 
 @dataclass

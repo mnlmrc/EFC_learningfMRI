@@ -13,10 +13,10 @@ from scipy.stats import linregress
 from scipy.linalg import orthogonal_procrustes
 
 import EFC_learningfMRI.globals as gl
-from EFC_learningfMRI.util import get_trained_and_untrained, runs_to_keep, split_trained_untrained
+import EFC_learningfMRI.util as util # import get_trained_and_untrained, runs_to_keep, split_trained_untrained
 
 
-def G_sorted(G, sns, order=None):
+def G_sorted(G, sns, order=None, experiment='EFC_learningfMRI'):
     """Reorder the 8 chords (rows AND columns) of one or more subjects' matrices.
 
     In G, subject s's rows/cols follow get_trained_and_untrained(sns[s]) — that
@@ -26,7 +26,7 @@ def G_sorted(G, sns, order=None):
     Args:
         G:     (8, 8) for a single subject, or (n_subj, 8, 8) with the first axis
                aligned with `sns`.
-        sns:   participant number(s): a scalar for a 2D `G`, one per row for a 3D `G`.
+        sns:   participant number(s): a scalar for a 2D `G`, one per row for a 3D `G`. This argument is needed to know the chord order in the input G(s)
         order: desired sequence of the 8 chord IDs. Any permutation is fine.
                Defaults to `gl.chordID` (the IDs sorted numerically), which is the
                same for every subject — so the default framing never depends on `sns`.
@@ -48,7 +48,7 @@ def G_sorted(G, sns, order=None):
 
     order = np.asarray(gl.chordID if order is None else order, dtype=int)
 
-    chords_per_subj = [np.asarray(get_trained_and_untrained(sn), dtype=int) for sn in sns]
+    chords_per_subj = [np.asarray(util.get_trained_and_untrained(sn, experiment=experiment), dtype=int) for sn in sns]
 
     if order.size != G.shape[1]:
         raise ValueError(f"order lists {order.size} chords but G is {G.shape[1]}x{G.shape[1]}")
@@ -80,7 +80,7 @@ def calc_G(data, cond_vec, part_vec, session='all', repetition='all', centred=Fa
     if centred:
         data = data - data.mean(axis=1, keepdims=True)
 
-    keep = runs_to_keep(cond_vec, session=session, repetition=repetition)
+    keep = util.runs_to_keep(cond_vec, session=session, repetition=repetition)
 
     if crossval:
         G_obs, _ = pcm.est_G_crossval(data[keep],
@@ -166,7 +166,7 @@ def G_rows(G, sn, **labels):
     came from — Hem/roi/session for a neural G, metric/session for a force one.
     The ``pair`` label is order-normalised so both Gs key on the same pair id.
     """
-    chords = get_trained_and_untrained(sn)
+    chords = util.get_trained_and_untrained(sn)
     D      = pcm.G_to_dist(G)
     cos    = pcm.G_to_cosine(G)
 

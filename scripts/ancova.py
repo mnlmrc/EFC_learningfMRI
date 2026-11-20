@@ -239,7 +239,6 @@ def make_rois_force_prediction_dataframe(glm      = 3,
 FUNC = {
     'make_rois_ancova_group_dataframe'      : make_rois_ancova_group_dataframe,
     'make_force_ancova_group_dataframe'     : make_force_ancova_group_dataframe,
-    'make_rois_ancova_group_force_dataframe': functools.partial(make_rois_ancova_force_dataframe, group=True),
     'make_rois_ancova_force_dataframe'      : make_rois_ancova_force_dataframe,
     'make_rois_force_prediction_dataframe'  : make_rois_force_prediction_dataframe,
 }

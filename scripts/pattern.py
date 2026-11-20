@@ -1,6 +1,5 @@
 import argparse
 import os
-import pickle
 import itertools
 import numpy as np
 import PcmPy as pcm
@@ -11,24 +10,8 @@ import EFC_learningfMRI.globals as gl
 import EFC_learningfMRI.G_matrix as G_matrix
 import EFC_learningfMRI.betas as betas
 import EFC_learningfMRI.pcm as pcm_
-
-def make_rois_distance_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=True):
-
-    sns  = gl.participants if sns is None else sns
-    rois = gl.rois[atlas_name]
-
-    rows = []
-    for H, roi, sess in itertools.product(gl.Hem, rois, gl.sessions):
-        for sn in sns:
-
-            print(f'doing participant {sn}, session {sess}, {H}, {roi}...')
-
-            G = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'G_obs_raw.within_session.{sess}.glm{glm}.{H}.{roi}.npy'))
-            rows += G_matrix.G_rows(G, sn, Hem=H, roi=roi, session=sess)
-
-    df = pd.DataFrame(rows)
-    df = G_matrix.add_group_reference(df, ['Hem', 'roi', 'pair'], ref_session, crossval)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+import EFC_learningfMRI.models as models
+import EFC_learningfMRI.util as util
 
 
 def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['all']):
@@ -45,7 +28,7 @@ def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['
                 G_raw    = G_matrix.calc_G(data.betas, data.cond_vec, data.part_vec, session, repetition=repetition, centred=False, fixed_effect=False)
                 G_noxval = G_matrix.calc_G(data.betas, data.cond_vec, data.part_vec, session, repetition=repetition, centred=False, fixed_effect=False, crossval=False)
 
-                save_path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{data.sn}')
+                save_path = os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}')
                 os.makedirs(save_path, exist_ok=True)
 
                 fname = G_matrix.make_fname(session, repetition)
@@ -54,6 +37,30 @@ def calc_G_rois(sns=gl.participants, glm=3, sessions=gl.sessions, repetitions=['
                 np.save(os.path.join(save_path, f'cov.{fname}.glm{glm}.{data.Hem}.{data.roi}'), cov)
                 np.save(os.path.join(save_path, f'G_obs_raw.{fname}.glm{glm}.{data.Hem}.{data.roi}'), G_raw)
                 np.save(os.path.join(save_path, f'G_obs_noxval.{fname}.glm{glm}.{data.Hem}.{data.roi}'), G_noxval)
+
+
+def calc_G_split(sns=gl.participants, glm=3, sessions=gl.sessions):
+    """G_split: the G_obs_raw of each half of each session's runs (:func:`util.split_half`).
+
+    Saved as ``G_obs_raw.within_session.<session>.half<half>.glm<glm>.<Hem>.<roi>.npy``
+    next to the full-session Gs. Each half is crossvalidated over its own runs, so two
+    halves share no data and their RDMs can be correlated without a shared-noise bias.
+    """
+    loader = betas.BetasPrewithenedLoader(sns=sns, glm=glm)
+    for data in loader:
+
+        save_path = os.path.join(gl.baseDir, gl.geomDir, f'subj{data.sn}')
+        os.makedirs(save_path, exist_ok=True)
+
+        for session, half in itertools.product(sessions, (0, 1)):
+
+            print(f'split, doing participant {data.sn}, session {session}, half {half}...')
+
+            idx   = util.split_half(data.cond_vec, data.part_vec, session, half)
+            G_raw = G_matrix.calc_G(data.betas[idx], data.cond_vec[idx], data.part_vec[idx], session, centred=False, fixed_effect=False)
+
+            np.save(os.path.join(save_path, f'G_obs_raw.within_session.{session}.half{half}.glm{glm}.{data.Hem}.{data.roi}'), G_raw)
+
 
 
 def _rdm_vectors(sns, H, roi, session, glm, prefix='G_obs_raw', order=None):
@@ -71,7 +78,7 @@ def _rdm_vectors(sns, H, roi, session, glm, prefix='G_obs_raw', order=None):
 
     rdms = []
     for sn in sns:
-        G   = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
+        G   = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
         G_s = G_matrix.G_sorted(G, sn, order=order)
         D   = pcm.G_to_dist(G_s)
         rdms.append(D[mask])
@@ -114,6 +121,25 @@ def _noise_ceiling(rdms, method='pearson'):
     return np.array(lower), np.array(upper)
 
 
+def make_dissimilarity_dataframe(glm=3, atlas_name='ROI', sns=None, ref_session=3, crossval=True):
+
+    sns  = gl.participants if sns is None else sns
+    rois = gl.rois[atlas_name]
+
+    rows = []
+    for H, roi, sess in itertools.product(gl.Hem, rois, gl.sessions):
+        for sn in sns:
+
+            print(f'doing participant {sn}, session {sess}, {H}, {roi}...')
+
+            G = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'G_obs_raw.within_session.{sess}.glm{glm}.{H}.{roi}.npy'))
+            rows += G_matrix.G_rows(G, sn, Hem=H, roi=roi, session=sess)
+
+    df = pd.DataFrame(rows)
+    df = G_matrix.add_group_reference(df, ['Hem', 'roi', 'pair'], ref_session, crossval)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'dissimilarity.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+
+
 def make_noise_ceiling_dataframe(glm=3, atlas_name='ROI', sns=None, prefix='G_obs_raw',
                                  method='pearson', order=None):
     """Noise ceiling of the crossnobis RDM for every hemisphere, roi and session.
@@ -145,8 +171,8 @@ def make_noise_ceiling_dataframe(glm=3, atlas_name='ROI', sns=None, prefix='G_ob
     df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'noise_ceiling.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
-def _model_rdm_vectors(sn, glm=3, order=None, Hem=None, roi=None, force=False):
-    """Vectorised RDM of every model in ``pcm.model_Gs``, for one participant.
+def _model_rdm_vectors(sn, Hem, roi, order=None, glm=3):
+    """Vectorised RDM of every model in ``models.make_G_dict``, for one participant.
 
     Built on the same chord ``order`` and put through the same ``G_to_dist`` and lower
     triangle as :func:`_rdm_vectors`, so entry k of a model vector is the chord pair
@@ -157,44 +183,46 @@ def _model_rdm_vectors(sn, glm=3, order=None, Hem=None, roi=None, force=False):
     Returns a dict model name -> (n_pairs,) vector.
     """
     mask = np.tri(len(gl.chordID), k=-1, dtype=bool)
-    Gs   = pcm_.model_Gs(sn, glm=glm, Hem=Hem, roi=roi, order=order, force=force)
+    Gs   = models.make_G_dict(sn, order=order, Hem=Hem, roi=roi, glm=glm)
     return {name: pcm.G_to_dist(G)[mask] for name, G in Gs.items()}
 
 
 def make_model_correlation_dataframe(sns=gl.participants, glm=3, atlas_name='ROI', rois=None, prefix='G_obs_raw',
-                                     method='pearson', order=None, include_base=False):
-    """RSA: each participant's crossnobis RDM against every model RDM of ``pcm.model_Gs``.
+                                     method='spearman', order=None, include_base=False):
+    """RSA: each participant's crossnobis RDM against every model RDM of ``models.make_G_dict``.
 
     """
-    if rois is none:
+    if rois is None:
         rois  = gl.rois[atlas_name]
     order = gl.chordID if order is None else order
 
-    # roi-independent, so built once per participant rather than once per cell
-    models = {sn: _model_rdm_vectors(sn, glm=glm, order=order) for sn in sns}
-
     rows = []
-    for H, roi, session in itertools.product(gl.Hem, rois, gl.sessions):
+    for H, roi in itertools.product(gl.Hem, rois):
 
-        print(f'doing {H}, {roi}, session {session}...')
+        # session-independent, but spencer depends on the roi
+        model_rdms = {sn: _model_rdm_vectors(sn, H, roi, order=order, glm=glm) for sn in sns}
 
-        # calculate noise ceiling (rdms in common order)
-        rdms         = _rdm_vectors(sns, H, roi, session, glm, prefix=prefix, order=order)
-        lower, upper = _noise_ceiling(rdms, method=method)
+        for session in gl.sessions:
 
-        for i, sn in enumerate(sns):
-            for name, model_rdm in model_rdms.items():
-                rows.append({'sn'     : sn,
-                             'Hem'    : H,
-                             'roi'    : roi,
-                             'session': session,
-                             'model'  : name,
-                             'r'      : _corr(rdms[i], model_rdm, method),
-                             'lower'  : lower[i],
-                             'upper'  : upper[i]})
+            print(f'doing {H}, {roi}, session {session}...')
+
+            # calculate noise ceiling (rdms in common order)
+            rdms         = _rdm_vectors(sns, H, roi, session, glm, prefix=prefix, order=order)
+            lower, upper = _noise_ceiling(rdms, method=method)
+
+            for i, sn in enumerate(sns):
+                for name, model_rdm in model_rdms[sn].items():
+                    rows.append({'sn'     : sn,
+                                 'Hem'    : H,
+                                 'roi'    : roi,
+                                 'session': session,
+                                 'model'  : name,
+                                 'r'      : _corr(rdms[i], model_rdm, method),
+                                 'lower'  : lower[i],
+                                 'upper'  : upper[i]})
 
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_correlation.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'model_correlation.within_session.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
 def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, prefix='G_obs_raw'):
@@ -210,153 +238,75 @@ def make_scaling_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, pre
 
         print(f'doing participant {sn}, session {session}, {H}, {roi}...')
 
-        G_ref = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{ref_session}.glm{glm}.{H}.{roi}.npy'))
-        G_tar = np.load(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
+        G_ref = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{ref_session}.glm{glm}.{H}.{roi}.npy'))
+        G_tar = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{session}.glm{glm}.{H}.{roi}.npy'))
 
         for chord, b in blocks.items():
             G_scaled = G_matrix.G_scaling(G_ref[b, b], G_tar[b, b])
             rows.append(G_scaled.assign(chord=chord, session=session, Hem=H, roi=roi, sn=sn))
 
     df = pd.concat(rows, ignore_index=True)
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'scaling.between_session.glm{glm}.{atlas_name}.tsv'), sep='\t', index=False)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'scaling.between_session.glm{glm}.{atlas_name}.tsv'), sep='\t', index=False)
 
 
+def make_test_retest_dataframe(sns=None, glm=3, atlas_name='ROI', ref_session=3, prefix='G_obs_raw', method='spearman'):
+    """Within-participant test-retest of the RDM, with its split-half noise ceiling.
 
-def fit_component_model_rois(sns=gl.participants, glm=3, atlas_name='ROI', residual_fname='residual.dtseries.nii'):
-    """Fit the PCM component model per (subject, Hem, roi, session).
+    Everything is computed on half-session RDMs (:func:`calc_G_split`), so the
+    between-session correlation and its ceiling rest on the same amount of data:
 
-    Prewhitens the betas once per (subject, roi) with BetasPrewithenedLoader, then
-    fits the component model (which includes 'base', the group-mean observed G of
-    session 3) and pickles each fit's ``theta_in`` next to the participant's Gs, as
-    ``component_model.theta_in.<atlas_name>.glm<glm>.<session>.<Hem>.<roi>.p`` --
-    which component_summary reads back.
+    r_between: a half of ``ref_session`` against a half of ``session``, averaged over
+               the four pairings.
+    r_ref:     the two halves of ``ref_session`` against each other (split-half reliability).
+    r_session: the two halves of ``session`` against each other.
+
+    If the geometry did not change, r_between is limited only by the noise in the two
+    halves, and its expected value is sqrt(r_ref * r_session) (the ceiling).
+
+    One row per participant, hemisphere, roi and session other than ``ref_session``.
+    Writes ``test_retest.<atlas_name>.glm<glm>.tsv`` to the geometry dir.
     """
-    loader = betas.BetasPrewithenedLoader(sns=sns, glm=glm, atlas_name=atlas_name, residual_fname=residual_fname)
-    pcm_.fit_component_model(loader)
+    sns      = gl.participants if sns is None else sns
+    rois     = gl.rois[atlas_name]
+    mask     = np.tri(len(gl.chordID), k=-1, dtype=bool)
+    sessions = [s for s in gl.sessions if s != ref_session]   # against itself, two of the four pairings would be a half with itself
+
+    rows = []
+    for sn, H, roi in itertools.product(sns, gl.Hem, rois):
+
+        print(f'doing participant {sn}, {H}, {roi}...')
+
+        # same participant, same (trained-first) chord order in every session, so no reordering is needed
+        rdm = {}
+        for session, half in itertools.product(gl.sessions, (0, 1)):
+            G = np.load(os.path.join(gl.baseDir, gl.geomDir, f'subj{sn}', f'{prefix}.within_session.{session}.half{half}.glm{glm}.{H}.{roi}.npy'))
+            rdm[session, half] = pcm.G_to_dist(G)[mask]
+
+        r_ref = _corr(rdm[ref_session, 0], rdm[ref_session, 1], method)
+        for session in sessions:
+            r_between = np.mean([_corr(rdm[ref_session, a], rdm[session, b], method) for a, b in itertools.product((0, 1), (0, 1))])
+            rows.append({'sn'       : sn,
+                         'Hem'      : H,
+                         'roi'      : roi,
+                         'session'  : session,
+                         'r_between': r_between,
+                         'r_ref'    : r_ref,
+                         'r_session': _corr(rdm[session, 0], rdm[session, 1], method)})
+
+    df = pd.DataFrame(rows)
+    df.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'test_retest.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
 
 
-def make_component_weight_dataframe(sns=None, glm=3, atlas_name='ROI'):
-    """Collect the component weights fitted by component_fit into one dataframe.
-
-    Reads each pickled ``theta_in``, takes the component model's theta (the other
-    models' thetas have different lengths, so the list cannot be arrayed as a whole),
-    exponentiates it to weights -- one per component -- and writes one long-form row
-    per component to ``component_model.<atlas_name>.glm<glm>.tsv`` in the pcm dir.
-
-    ``log_bf`` is each component's log Bayes factor from the model family fit of the
-    same cell (``PcmPy`` ``ModelFamily.component_bayesfactor``, AIC-corrected): the
-    evidence for the models with the component against those without, averaged over
-    every combination of the other components. It is NaN for the family's base
-    components, which are in every model.
-
-    The component names are the ones the fit itself stored next to its theta, so a
-    component list that has changed since the fit cannot shift the weights onto the
-    wrong names -- a pickle from before the names were stored raises instead.
-    """
-    sns = gl.participants if sns is None else sns
-
-    df = pd.DataFrame()
-    for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, gl.rois[atlas_name]):
-
-        path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'component_model.theta_in.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
-        with open(path, 'rb') as f:
-            fit = pickle.load(f)
-
-        if not isinstance(fit, dict):
-            raise ValueError(f'{path} was fitted before the component names were stored with the theta, '
-                             f'so which component each weight belongs to cannot be known -- rerun the '
-                             f'fit_component pass')
-
-        comp_names = fit['comp_names']
-
-        # fit['theta'] holds one theta per model and they have different lengths, so it cannot
-        # be arrayed as a whole -- take the component model's: one log weight per component,
-        # followed by the log scale (only if the fit had fit_scale=True) and the log noise,
-        # which is why the components are sliced by name count and not by dropping the tail
-        weight = np.exp(np.array(fit['theta'][0][:len(comp_names)]))
-
-        # log Bayes factor of each component from the model family fit of the same cell
-        stem = f'{atlas_name}.glm{glm}.{session}.{H}.{roi}.p'
-        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.theta.{stem}'), 'rb') as f:
-            fam_names = list(pickle.load(f)['comp_names'])
-        with open(os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{stem}'), 'rb') as f:
-            T_mf = pickle.load(f)
-
-        # only the family's structure is needed, which zero matrices with the same names reproduce
-        MF = pcm.model.ModelFamily(np.zeros((len(fam_names), 8, 8)), comp_names=fam_names)
-        bf = MF.component_bayesfactor(T_mf.likelihood, method='AIC')[0]
-        bf = dict(zip(fam_names, bf))          # the family's base components are in every model: no Bayes factor
-
-        df_tmp = pd.DataFrame({'weight'   : weight.squeeze(), 
-                               'component': comp_names,
-                               'log_bf'   : [bf.get(c, np.nan) for c in comp_names]})
-        df_tmp['sn']      = sn
-        df_tmp['Hem']     = H
-        df_tmp['roi']     = roi
-        df_tmp['session'] = session
-        df = pd.concat([df, df_tmp], ignore_index=True)
-
-    df.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'component_model.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
-
-
-def make_likelihood_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
-
-    rois = gl.rois[atlas_name]
-
-    LL = []
-    for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
-        path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'component_model.T_in.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
-        with open(path, 'rb') as f:
-            T_in = pickle.load(f)
-        
-        ll            = T_in.likelihood
-        ll['sn']      = sn
-        ll['session'] = session
-        ll['Hem']     = H
-        ll['roi']     = roi
-        LL.append(ll)
-
-    LL = pd.concat(LL, ignore_index=True)
-    LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
-
-
-def make_model_family_dataframe(sns=gl.participants, glm=3, atlas_name='ROI'):
-    """Likelihood of every model of the model family, one row per (sn, session, Hem, roi).
-
-    The columns are the family's model names, in the family's order, so the mean over
-    participants of a cell can go straight into ``PcmPy.vis.plot_tree``.
-    """
-    rois = gl.rois[atlas_name]
-
-    LL = []
-    for sn, session, H, roi in itertools.product(sns, gl.sessions, gl.Hem, rois):
-        path = os.path.join(gl.baseDir, gl.pcmDir, f'subj{sn}', f'model_family.T.{atlas_name}.glm{glm}.{session}.{H}.{roi}.p')
-        with open(path, 'rb') as f:
-            T = pickle.load(f)
-
-        ll            = T.likelihood.copy()
-        ll['sn']      = sn
-        ll['session'] = session
-        ll['Hem']     = H
-        ll['roi']     = roi
-        LL.append(ll)
-
-    LL = pd.concat(LL, ignore_index=True)
-    LL.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'model_family.likelihood.{atlas_name}.glm{glm}.tsv'), sep='\t', index=False)
-
-
-# Step name -> function, grouped by what the step produces: the Gs, then the PCM fits
-# over them, then the tsvs collected from either.
+# Step name -> function, grouped by what the step produces: the Gs, then the tsvs
+# collected from them. The component model fits live in component_model.py.
 FUNC = {
-    'G_rois'                        : calc_G_rois,
-    'fit_component_model_rois'      : fit_component_model_rois,
-    'make_rois_distance_dataframe'  : make_rois_distance_dataframe,
-    'dataframe_noise_ceiling'       : make_noise_ceiling_dataframe,
-    'dataframe_model_correlation'   : make_model_correlation_dataframe,
-    'dataframe_scaling'             : make_scaling_dataframe,
-    'dataframe_component_weight'    : make_component_weight_dataframe,
-    'dataframe_component_likelihood': make_likelihood_dataframe,
-    'dataframe_model_family'        : make_model_family_dataframe,
+    'calc_G_rois'                  : calc_G_rois,
+    'calc_G_split'                 : calc_G_split,
+    'make_dissimilarity_dataframe' : make_dissimilarity_dataframe,
+    'dataframe_noise_ceiling'      : make_noise_ceiling_dataframe,
+    'model_correlation'            : make_model_correlation_dataframe,
+    'make_dataframe_scaling'       : make_scaling_dataframe,
+    'test_retest'                  : make_test_retest_dataframe,
 }
 
 
@@ -382,6 +332,4 @@ if __name__=='__main__':
     kwargs = {k: v for k, v in vars(args).items() if k != 'what' and v is not None}
     main(args.what, **kwargs)
 
-    if args.what is None:
-        calc_G_rois(sns=[116])
 

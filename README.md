@@ -340,15 +340,15 @@ flowchart TB
     %% CORRXVAL[("<b>cross-validated across-session cosine:</b><br/>pcm/xval_correlation.#lt;atlas#gt;.glm#lt;glm#gt;.tsv")]:::data
     %% CORRCOV[("<b>across-session cov per session-pair and chord set:</b><br/>pcm/cov.corr_across_sess.glm#lt;glm#gt;.#lt;spair#gt;.#lt;chord#gt;.#lt;H#gt;.#lt;roi#gt;.npy")]:::data
 
-        P_CFIT["scripts/pattern.fit_component_model_rois()³"]:::code
+        P_CFIT["scripts/component_model.fit_component_model_rois()³"]:::code
         CTHETA[("<b>component-model log-weights:</b><br/>pcm/subj#lt;sn#gt;/component_model.theta_in.#lt;atlas#gt;.glm#lt;glm#gt;.#lt;session#gt;.#lt;H#gt;.#lt;roi#gt;.p")]:::data
 
-        P_CSUM["scripts/pattern.make_component_weight_dataframe()"]:::code
+        P_CSUM["scripts/component_model.make_component_weight_dataframe()"]:::code
         CMODEL[("<b>component weights:</b><br/>pcm/component_model.#lt;atlas#gt;.glm#lt;glm#gt;.tsv")]:::data
 
         CTIN[("<b>individual-fit model log-likelihoods:</b><br/>pcm/subj#lt;sn#gt;/component_model.T_in.#lt;atlas#gt;.glm#lt;glm#gt;.#lt;session#gt;.#lt;H#gt;.#lt;roi#gt;.p")]:::data
 
-        P_LIKE["scripts/pattern.make_likelihood_dataframe()"]:::code
+        P_LIKE["scripts/component_model.make_likelihood_dataframe()"]:::code
         LIKE[("<b>log-likelihood of every model:</b><br/>pcm/likelihood.#lt;atlas#gt;.glm#lt;glm#gt;.tsv")]:::data
 
         NBETA --> P_GROIS

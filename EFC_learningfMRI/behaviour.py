@@ -125,30 +125,32 @@ def force_patterns(force, sn, metric, session='all', repetition='all'):
     return data, cond_vec, part_vec
 
 
-def find_sustained_threshold_crossing(F, chordID, threshold, fsample, duration_ms=600):
+def find_sustained_threshold_crossing(F, chordID, threshold_instr, threshold_uninstr, fsample, duration_ms=600):
     """
-    Find the first timepoint at which all selected channels exceed a threshold
-    and remain above it for a given duration.
+    Find the first timepoint at which all instructed fingers exceed threshold_instr while
+    all uninstructed fingers stay below threshold_uninstr, and this holds for duration_ms.
 
     Parameters:
-    - F: np.ndarray of shape (timepoints, channels)
-    - channels: list of int, indices of selected channels
-    - threshold: float, the threshold to exceed
+    - F: np.ndarray of shape (timepoints, fingers), absolute force
+    - chordID: int, chord code (1 extension, 2 flexion, 9 uninstructed)
+    - threshold_instr: float, force the instructed fingers must exceed
+    - threshold_uninstr: float, force the uninstructed fingers must stay below
     - fsample: float, the sampling frequency in Hz
-    - duration_ms: float, duration in milliseconds the signal must stay above threshold
+    - duration_ms: float, duration in milliseconds the condition must hold
 
     Returns:
     - int: index of the first timepoint meeting the condition, or -1 if not found
     """
     n_samples = int((duration_ms / 1000) * fsample)
-    channels  = [i for i, c in enumerate(str(chordID)) if c in ('1', '2')]
-    above_thresh = F[:, channels] > threshold
+    channels_instr   = [i for i, c in enumerate(str(chordID)) if c in ('1', '2')]
+    channels_uninstr = [i for i, c in enumerate(str(chordID)) if c == '9']
 
-    # Create a combined signal: True only if all selected channels are above threshold
-    all_channels_above = np.all(above_thresh, axis=1).astype(int)
+    # True only if all instructed fingers are above and all uninstructed fingers below threshold
+    in_target = np.all(F[:, channels_instr] > threshold_instr, axis=1) & \
+                np.all(F[:, channels_uninstr] < threshold_uninstr, axis=1)
 
     # Convolve with a flat window of size n_samples
-    sustained = np.convolve(all_channels_above, np.ones(n_samples, dtype=int), mode='valid')
+    sustained = np.convolve(in_target.astype(int), np.ones(n_samples, dtype=int), mode='valid')
 
     # Find first timepoint where all values in the window are True (i.e. sum == n_samples)
     idx = np.where(sustained == n_samples)[0]
@@ -186,7 +188,7 @@ def analyse_trial(F, chordID, n_ord=4, cutoff=5, fsample=gl.fsample['force']):
     # F_der_peak   = F_der_abs.max(axis=0)
 
     # find sample at which the participant start executing the chord and holds it for at least 600ms
-    ET_samples = find_sustained_threshold_crossing(np.abs(F_filt), chordID, gl.ftarget, fsample=fsample)
+    ET_samples = find_sustained_threshold_crossing(np.abs(F_filt), chordID, gl.ftarget, gl.fthresh, fsample=fsample)
     
     # if participant is unable to hold the chord for at least 600ms trial is unsuccessful
     if ET_samples < 0:
