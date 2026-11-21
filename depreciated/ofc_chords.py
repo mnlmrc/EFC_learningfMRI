@@ -116,7 +116,7 @@ Module layout (all functions are independent and replaceable)
 7. Simulation               simulate_trial
 8. Learning                 align_feedback, prediction_error, update_model,
                             update_model_perturb
-9. Experiment               Session, default_schedule, run_experiment
+9. Experiment               run_trials
 10. Analysis                measure_forces, force_derivative, window_indices,
                             derivative_patterns, rdm, mean_distance,
                             finger_force_variance, finger_change_correlation,
@@ -129,8 +129,10 @@ from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
 import numpy as np
+import pandas as pd
 
 import EFC_learningfMRI.globals as gl
+import EFC_learningfMRI.behaviour as behav
 
 
 # ---------------------------------------------------------------------------
@@ -728,3 +730,56 @@ def update_model(model: InternalModel, trial: dict, plant: Plant,
     return tried if spe_try < spe_now else model.copy()
 
 
+
+
+# ---------------------------------------------------------------------------
+# 9. Experiment
+#    Repeats design_controller -> simulate_trial -> update_model over trials,
+#    and scores each trial like the participants' data (behaviour.analyse_trial).
+# ---------------------------------------------------------------------------
+
+def run_trials(plant: Plant, model: InternalModel, targets: dict[int, np.ndarray],
+               chord_ids: Sequence[int], n_trials: int, Q: np.ndarray, R: np.ndarray,
+               n_steps: int, rng: np.random.Generator, learn: bool = True,
+               reaction_time: float = 0.3):
+    """Run n_trials of the chords in chord_ids, in random order.
+
+    The sequence repeats chord_ids as evenly as possible and is shuffled.
+    Before each trial the controller is designed from the current internal
+    model; after it, the model is updated (if learn=True).
+
+    targets        {chordID: target forces x̄}, from chords_to_targets
+    reaction_time  s of rest between the go signal and the start of the
+                   simulated press (see below)
+    returns  (df, model): one row per trial with the single-trial metrics of
+             behaviour.analyse_trial (trialPoint, RT, ET, MD and per-finger
+             mean raw / absolute force and absolute force derivative), and the
+             internal model after the last trial.
+    """
+    sequence = rng.permutation(np.resize(np.asarray(chord_ids), n_trials))
+    fsample = 1 / plant.dt
+    rows = []
+    for tn, c in enumerate(sequence):
+        ctrl = design_controller(model, plant, targets[c], Q, R)
+        trial = simulate_trial(plant, ctrl, n_steps, rng)
+        if learn:
+            model = update_model(model, trial, plant, rng=rng)
+
+        # simulated trials start pressing immediately: prepend the planning
+        # period plus a reaction time at rest, as in the real trials. Without
+        # the reaction time, analyse_trial's zero-phase low-pass filter smears
+        # the force onset back into the planning period and the trial is
+        # scored as a false start.
+        n_rest = int((gl.plan_time + reaction_time) * fsample)
+        F = np.r_[np.zeros((n_rest, plant.n)), trial['x']]
+        m = behav.analyse_trial(F, c, fsample=fsample)
+
+        row = {'TN': tn + 1, 'chordID': c, 'trialPoint': m['trialPoint'],
+               'RT': m['RT'], 'ET': m['ET'], 'MD': m['MD']}
+        for i, f in enumerate(gl.fingers):
+            row[f'{f}_raw'] = m['F_avg'][i]
+            row[f'{f}_abs'] = m['F_abs_avg'][i]
+            row[f'{f}_der'] = m['F_der_abs_avg'][i]
+        rows.append(row)
+
+    return pd.DataFrame(rows), model
