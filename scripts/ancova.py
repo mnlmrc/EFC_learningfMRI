@@ -69,7 +69,7 @@ def make_rois_ancova_group_dataframe(glm      = 3,
     if rois is None:
         rois = gl.rois[atlas]
 
-    dist_neural = pd.read_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity.within_session.{atlas}.glm{glm}.tsv'), sep='\t')
+    dist_neural = pd.read_csv(os.path.join(gl.baseDir, gl.geomDir, f'dissimilarity.within_session.{atlas}.glm{glm}.tsv'), sep='\t')
     dist_neural = dist_neural[dist_neural.chord.isin(['trained', 'untrained']) & dist_neural.session.isin(gl.sessions)]
 
     cells = []
@@ -82,7 +82,7 @@ def make_rois_ancova_group_dataframe(glm      = 3,
 
     df_ancova = pd.concat(cells, ignore_index=True)
 
-    df_ancova.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_ancova_group.within_session.{atlas}.glm{glm}.tsv'), sep='\t', index=False)
+    df_ancova.to_csv(os.path.join(gl.baseDir, gl.geomDir, f'dissimilarity_ancova_group.within_session.{atlas}.glm{glm}.tsv'), sep='\t', index=False)
 
     return df_ancova
 
@@ -230,9 +230,6 @@ def make_rois_force_prediction_dataframe(glm      = 3,
     df_pred.to_csv(os.path.join(gl.baseDir, gl.pcmDir, f'dissimilarity_force_prediction.ref{ref_sess}.within_session.{atlas}.glm{glm}.tsv'), sep='\t', index=False)
 
     return df_pred
-
-
-
 
 
 # Step name -> function.
